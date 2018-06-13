@@ -70,7 +70,7 @@ def to_emb(sentences, emb):
 
 def pad_data(sources):
     '''
-    Pads sequences to the same length defined by the biggest one
+    Pads sequences to the same length defined by the biggest one (with value 0)
 
     Inputs:
         -> sources, list of numpy array of shape [sequence_length, embedding_dim]
@@ -202,12 +202,16 @@ class DataContainer(object):
 
         # add StartOfSentence token to vocabulary
         self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(cleaned_sources + ['sos'], self.emb)
+        self.y_parrot = [[self.word2idx[w] for w in unidecode(s).lower().split(' ')] for s in cleaned_sources]
 
-        x_train, self.x_test, y_train, self.y_test, sl_train, self.sl_test = train_test_split(sources, labels, seq_lengths,
-                                                                                              test_size=self.test_size,
-                                                                                              stratify=self.data.labels)
+        # _tr = _train | _te = _test
+        x_tr, self.x_te, y_tr, self.y_te, sl_tr, self.sl_te, y_p_tr, self.y_p_te = train_test_split(sources, labels, seq_lengths,
+                                                                                               self.y_parrot,
+                                                                                               test_size=self.test_size,
+                                                                                               stratify=self.data.labels)
 
-        sources, labels, seq_lengths = shuffle_data(x_train, y_train, sl_train)
+        sources, labels, seq_lengths, y_parrot_shuffled = shuffle_data(x_tr, y_tr, sl_tr, y_p_tr)
+        self.y_parrot_batch = create_batch(y_parrot_shuffled, batch_size=self.batch_size)
         self.x_train, self.y_train, self.sl_train = to_batch(sources, labels, seq_lengths, self.batch_size)
 
 
@@ -343,7 +347,7 @@ def unitest_encoder(dataset, emb_path):
     for epoch in range(300):
         for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
             optimizer.minimize(lambda: encoder.get_loss(epoch, x, y, seq_length))
-        encoder.validation(epoch, dc.x_test, dc.y_test, dc.sl_test)
+        encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
         if encoder.early_stoping:
             break
 
@@ -415,12 +419,25 @@ class DecoderRNN(object):
         return final_full_sentence
 
     def get_loss(self, x, y):
+        '''
+
+        Inputs:
+            -> x,
+            -> y, list of list
+
+        Outputs:
+            ->
+        '''
         wp, wl = self.forward(x, self.decoder_cell.zero_state(32, dtype=tf.float32))
         fwp = self.get_sequence(wp, pad=True)
+        y_pad = tf.convert_to_tensor([s + [len(self.w2i) + 1] * (self.max_tokens - len(s)) for s in y])
+        print(y_pad.shape)
+        input(fwp.shape)
+        # np.pad(s, pad_width=[(0, max_seq_length - s.shape[0]), (0, 0)], mode='constant', constant_values=0)
         # tf.nn.sigmoid_cross_entropy_with_logits(labels=, logits=)
 
-    def test(self, x):
-        self.get_loss(x)
+    def test(self, x, y):
+        self.get_loss(x, y)
 
 
 def parrot_initialization(dataset, emb_path):
@@ -428,17 +445,19 @@ def parrot_initialization(dataset, emb_path):
     Trains the encoder-decoder to reproduce the input
     '''
     dc = DataContainer(dataset, emb_path)
-    x = [sample for batch in dc.x_train for sample in batch] + dc.x_test
-    y = np.vstack([np.asarray([sample for batch in dc.y_train for sample in batch]), dc.y_test])
+    x = [sample for batch in dc.x_train for sample in batch] + dc.x_te
+    y = np.vstack([np.asarray([sample for batch in dc.y_train for sample in batch]), dc.y_te])
+    y_parrot = [sample for batch in dc.y_parrot_batch for sample in batch] + dc.y_p_te
+    x_batch, y_parrot_batch = create_batch(x, dc.batch_size), create_batch(y_parrot, dc.batch_size)
     encoder = EncoderRNN(num_class=dc.num_class)
     decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb)
-    decoder.test(dc.sos)
+    decoder.test(dc.sos, y_parrot_batch[0])
     input()
     optimizer = tf.train.AdamOptimizer()
     for epoch in range(300):
         for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
             optimizer.minimize(lambda: decoder.get_loss(epoch, x, y, seq_length))
-        encoder.validation(epoch, x_test, y_test, sl_test)
+        encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
         if encoder.early_stoping:
             break
 
