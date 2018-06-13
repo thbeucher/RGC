@@ -201,13 +201,13 @@ class DataContainer(object):
         logging.info('Embeddings loaded.')
         self.data = DataLoader(self.input_file)
         cleaned_sources = [clean_sentence(s) + ' EOS' for s in self.data.sources]  # add EndOfSentence token
-        self.SOS = np.vstack([self.emb['SOS']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
+        self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
         sources = to_emb(cleaned_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
         sources, seq_lengths = pad_data(sources)
         labels, self.num_class = encode_labels(self.data.labels)
 
         # add StartOfSentence token to vocabulary
-        self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(cleaned_sources + ['SOS'], self.emb)
+        self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(cleaned_sources + ['sos'], self.emb)
 
         x_train, self.x_test, y_train, self.y_test, sl_train, self.sl_test = train_test_split(sources, labels, seq_lengths,
                                                                                               test_size=self.test_size,
@@ -231,13 +231,14 @@ class EncoderRNN(object):
 
         self.pred_layer_test = tf.layers.Dense(num_class, activation=None)
 
-    def forward(self, x, sl):
+    def forward(self, x, sl, final=True):
         '''
         Performs a forward pass through a rnn
 
         Inputs:
             -> x, numpy array, shape = [batch_size, input_dim], example: [batch_size, sequence_length, embedding_dim]
             -> sl, list of int, the list of sequence length for each sample in given batch
+            -> final, boolean, optional, whether or not to return only the final output and cell state
 
         Outputs:
             -> final_output, numpy array, shape = [batch_size, cell_size]
@@ -252,10 +253,14 @@ class EncoderRNN(object):
         # outputs shape = [time_steps, batch_size, cell_size]
         outputs = tf.stack(outputs, axis=1)  # Stack outputs to (batch_size, time_steps, cell_size)
         cell_states = tf.stack(cell_states, axis=1)
-        idxs_last_output = tf.stack([tf.range(len(x)), sl], axis=1)  # get end index of each sequence
-        final_output = tf.gather_nd(outputs, idxs_last_output)  # retrieve last output for each sequence
-        final_cell_state = tf.gather_nd(cell_states, idxs_last_output)
-        return final_output, final_cell_state
+
+        if final:
+            idxs_last_output = tf.stack([tf.range(len(x)), sl], axis=1)  # get end index of each sequence
+            final_output = tf.gather_nd(outputs, idxs_last_output)  # retrieve last output for each sequence
+            final_cell_state = tf.gather_nd(cell_states, idxs_last_output)
+            return final_output, final_cell_state
+        else:
+            return outputs, cell_states
 
     def classifier_predict(self, x, sl):
         '''
@@ -361,6 +366,17 @@ class DecoderRNN(object):
         self.word_predictor = tf.layers.Dense(len(word2idx), activation=None)
 
     def forward(self, sos, state):
+        '''
+        Performs forward pass through the decoder network
+
+        Inputs:
+            -> sos, numpy array, batch of SOS token, shape = [batch_size, emb_dim]
+            -> state, lstm_state_tuple (c, h)
+
+        Outputs:
+            -> words_predicted, tensor
+            -> words_logits, tensor
+        '''
         output = tf.convert_to_tensor(sos, dtype=tf.float32)
         words_predicted = []
         words_logits = []
@@ -371,9 +387,34 @@ class DecoderRNN(object):
             output = [self.i2e[i] for i in pred_word]
             words_predicted.append(pred_word)
             words_logits.append(logits)
-        words_predicted = tf.stack(words_predicted, axis=1)  # stack output to [batch_size, max_tokensa]
+        words_predicted = tf.stack(words_predicted, axis=1)  # stack output to [batch_size, max_tokens]
         words_logits = tf.stack(words_logits, axis=1)  # stack output to [batch_size, max_tokensa]
         return words_predicted, words_logits
+
+    def get_sequence(self, full_sentence):
+        '''
+        Slices samples in order to stop at EOS token
+
+        Inputs:
+            -> full_sentence, tensor, shape = [batch_size, max_tokens]
+
+        Outputs:
+            -> final_full_sentence, list of tensor, each tensor of shape = [sequence_length]
+        '''
+        eos_idx = {i[0]: i[1] for i in np.argwhere(full_sentence.numpy() == self.w2i['eos'])}  # find EOS indices
+        idxs_last_output = [eos_idx[i] if i in eos_idx else self.max_tokens - 1 for i in range(full_sentence.shape[0])]
+        final_full_sentence = [s[:i] for s, i in zip(full_sentence, idxs_last_output)]
+        return final_full_sentence
+
+    def get_loss(self, s1):
+        wp, wl = self.forward(s1, self.decoder_cell.zero_state(32, dtype=tf.float32))
+        fwp = self.get_sequence(wp)
+        print([el.shape for el in fwp])
+        input(len(fwp))
+        fwl = self.get_sequence(wl)
+
+    def test(self, s1):
+        self.get_loss(s1)
 
 
 def parrot_initialization(dataset, emb_path):
@@ -383,9 +424,9 @@ def parrot_initialization(dataset, emb_path):
     dc = DataContainer(dataset, emb_path)
     x = [sample for batch in dc.x_train for sample in batch] + dc.x_test
     y = np.vstack([np.asarray([sample for batch in dc.y_train for sample in batch]), dc.y_test])
-    input(y.shape)
-    encoder = Encoder(num_class=dc.num_class)
-    decoder = DecoderRNN(dc.w2i, dc.i2w, dc.i2e)
+    encoder = EncoderRNN(num_class=dc.num_class)
+    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb)
+    decoder.test(dc.sos)
     optimizer = tf.train.AdamOptimizer()
     for epoch in range(300):
         for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
