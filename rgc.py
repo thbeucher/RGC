@@ -105,26 +105,20 @@ def encode_labels(labels):
     return onehot_labels, len(uniq_labels)
 
 
-def shuffle_data(sources, labels, sequence_lengths):
+def shuffle_data(*data):
     '''
     Shuffles data
 
     Inputs:
-        -> sources, list
-        -> labels, list
-        -> sequence_lengths, list
+        -> give as many list as you want
 
     Outputs:
-        -> sources, list
-        -> labels, list
-        -> sequence_lengths, list
+        -> shuffled lists
     '''
     logging.info('Shuffling data...')
-    to_shuffle = [[s, l, sl] for s, l, sl in zip(sources, labels, sequence_lengths)]
+    to_shuffle = list(zip(*data))
     random.shuffle(to_shuffle)
-    sources, labels = list(map(lambda x: x[0], to_shuffle)), list(map(lambda x: x[1], to_shuffle))
-    sequence_lengths = list(map(lambda x: x[2], to_shuffle))
-    return sources, labels, sequence_lengths
+    return [list(map(lambda x: x[i], to_shuffle)) for i in range(len(data))]
 
 
 def to_batch(sources, labels, sequence_lengths, batch_size):
@@ -391,30 +385,42 @@ class DecoderRNN(object):
         words_logits = tf.stack(words_logits, axis=1)  # stack output to [batch_size, max_tokensa]
         return words_predicted, words_logits
 
-    def get_sequence(self, full_sentence):
+    def get_sequence(self, full_sentence, pad=False):
         '''
         Slices samples in order to stop at EOS token
 
         Inputs:
             -> full_sentence, tensor, shape = [batch_size, max_tokens]
+            -> pad, boolean, optional, whether or not to return a list of tensor
+               of shape sequence_length or to return a tensor of shape [batch_size, max_tokens]
+               where tokens after EOS token are padded to len(w2i) + 1
 
         Outputs:
-            -> final_full_sentence, list of tensor, each tensor of shape = [sequence_length]
+            -> final_full_sentence:
+                -> list of tensor, each tensor of shape = [sequence_length]
+                or
+                -> tensor, shape = [batch_size, max_tokens]
         '''
-        eos_idx = {i[0]: i[1] for i in np.argwhere(full_sentence.numpy() == self.w2i['eos'])}  # find EOS indices
+        full_sentence = full_sentence.numpy()
+        full_sentence[0][100] = self.w2i['eos']
+        full_sentence[5][115] = self.w2i['eos']
+        eos_idx = {i[0]: i[1] for i in np.argwhere(full_sentence == self.w2i['eos'])}  # find EOS indices
         idxs_last_output = [eos_idx[i] if i in eos_idx else self.max_tokens - 1 for i in range(full_sentence.shape[0])]
-        final_full_sentence = [s[:i] for s, i in zip(full_sentence, idxs_last_output)]
+        if pad:
+            for s, i in zip(full_sentence, idxs_last_output):
+                s[i+1:] = len(self.w2i) + 1
+            final_full_sentence = tf.convert_to_tensor(full_sentence)
+        else:
+            final_full_sentence = [s[:i+1] for s, i in zip(full_sentence, idxs_last_output)]  # i+1 to include the EOS token
         return final_full_sentence
 
-    def get_loss(self, s1):
-        wp, wl = self.forward(s1, self.decoder_cell.zero_state(32, dtype=tf.float32))
-        fwp = self.get_sequence(wp)
-        print([el.shape for el in fwp])
-        input(len(fwp))
-        fwl = self.get_sequence(wl)
+    def get_loss(self, x, y):
+        wp, wl = self.forward(x, self.decoder_cell.zero_state(32, dtype=tf.float32))
+        fwp = self.get_sequence(wp, pad=True)
+        # tf.nn.sigmoid_cross_entropy_with_logits(labels=, logits=)
 
-    def test(self, s1):
-        self.get_loss(s1)
+    def test(self, x):
+        self.get_loss(x)
 
 
 def parrot_initialization(dataset, emb_path):
@@ -427,6 +433,7 @@ def parrot_initialization(dataset, emb_path):
     encoder = EncoderRNN(num_class=dc.num_class)
     decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb)
     decoder.test(dc.sos)
+    input()
     optimizer = tf.train.AdamOptimizer()
     for epoch in range(300):
         for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
@@ -448,5 +455,5 @@ if __name__ == '__main__':
 
     tfe.enable_eager_execution()
 
-    unitest_encoder(args.input, args.emb)
-    # parrot_initialization(args.input, args.emb)
+    # unitest_encoder(args.input, args.emb)
+    parrot_initialization(args.input, args.emb)
