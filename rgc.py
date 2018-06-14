@@ -11,7 +11,6 @@ import tensorflow as tf
 from collections import deque
 from unidecode import unidecode
 import tensorflow.contrib.eager as tfe
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
 
 import default
@@ -406,38 +405,41 @@ class DecoderRNN(object):
                 -> tensor, shape = [batch_size, max_tokens]
         '''
         full_sentence = full_sentence.numpy()
-        full_sentence[0][100] = self.w2i['eos']
-        full_sentence[5][115] = self.w2i['eos']
+        # full_sentence[0][100] = self.w2i['eos']
+        # full_sentence[5][115] = self.w2i['eos']
         eos_idx = {i[0]: i[1] for i in np.argwhere(full_sentence == self.w2i['eos'])}  # find EOS indices
         idxs_last_output = [eos_idx[i] if i in eos_idx else self.max_tokens - 1 for i in range(full_sentence.shape[0])]
         if pad:
             for s, i in zip(full_sentence, idxs_last_output):
                 s[i+1:] = len(self.w2i) + 1
-            final_full_sentence = tf.convert_to_tensor(full_sentence)
+            final_full_sentence = tf.convert_to_tensor(full_sentence, dtype=tf.float32)
         else:
             final_full_sentence = [s[:i+1] for s, i in zip(full_sentence, idxs_last_output)]  # i+1 to include the EOS token
         return final_full_sentence
 
-    def get_loss(self, x, y):
+    def get_loss(self, sos, state, y, verbose=True):
         '''
+        Computes loss from given batch
 
         Inputs:
-            -> x,
+            -> sos, numpy array, shape = [batch_size, emb_dim]
+            -> state, lstm state tuple
             -> y, list of list
 
         Outputs:
-            ->
+            -> loss, float
         '''
-        wp, wl = self.forward(x, self.decoder_cell.zero_state(32, dtype=tf.float32))
+        # self.decoder_cell.zero_state(32, dtype=tf.float32)
+        wp, wl = self.forward(sos, state)
         fwp = self.get_sequence(wp, pad=True)
-        y_pad = tf.convert_to_tensor([s + [len(self.w2i) + 1] * (self.max_tokens - len(s)) for s in y])
-        print(y_pad.shape)
-        input(fwp.shape)
-        # np.pad(s, pad_width=[(0, max_seq_length - s.shape[0]), (0, 0)], mode='constant', constant_values=0)
-        # tf.nn.sigmoid_cross_entropy_with_logits(labels=, logits=)
+        y_pad = tf.convert_to_tensor([s + [len(self.w2i) + 1] * (self.max_tokens - len(s)) for s in y], dtype=tf.float32)
+        loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_pad, logits=fwp)
+        loss = tf.reduce_mean(loss)
 
-    def test(self, x, y):
-        self.get_loss(x, y)
+        if verbose:
+            logging.info('Now I talk')
+
+        return loss
 
 
 def parrot_initialization(dataset, emb_path):
@@ -447,18 +449,27 @@ def parrot_initialization(dataset, emb_path):
     dc = DataContainer(dataset, emb_path)
     x = [sample for batch in dc.x_train for sample in batch] + dc.x_te
     y = np.vstack([np.asarray([sample for batch in dc.y_train for sample in batch]), dc.y_te])
+    sl = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
     y_parrot = [sample for batch in dc.y_parrot_batch for sample in batch] + dc.y_p_te
-    x_batch, y_parrot_batch = create_batch(x, dc.batch_size), create_batch(y_parrot, dc.batch_size)
+
+    x_batch = create_batch(x, batch_size=dc.batch_size)
+    y_parrot_batch = create_batch(y_parrot, batch_size=dc.batch_size)
+    sl_batch = create_batch(sl, batch_size=dc.batch_size)
+
     encoder = EncoderRNN(num_class=dc.num_class)
     decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb)
-    decoder.test(dc.sos, y_parrot_batch[0])
-    input()
+
+    def get_loss(encoder, decoder, epoch, x, y, sl, sos):
+        output, cell_state = encoder.forward(x, sl)
+        loss = decoder.get_loss(sos, (cell_state, output), y)
+        return loss
+
     optimizer = tf.train.AdamOptimizer()
+
     for epoch in range(300):
-        for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
-            optimizer.minimize(lambda: decoder.get_loss(epoch, x, y, seq_length))
-        encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
-        if encoder.early_stoping:
+        for x, y, sl in zip(x_batch, y_parrot_batch, sl_batch):
+            optimizer.minimize(lambda: get_loss(encoder, decoder, epoch, x, y, sl, dc.sos))
+        if decoder.early_stoping:
             break
 
 
