@@ -437,7 +437,10 @@ class DecoderRNN(object):
                 -> tensor, shape = [batch_size, max_tokens]
         '''
         full_sentence = full_sentence.numpy()
-        eos_idx = {i[0]: i[1] for i in np.argwhere(full_sentence == self.w2i['eos'])}  # find EOS indices
+        eos_idx = {}
+        for i in np.argwhere(full_sentence == self.w2i['eos']):
+            if i[0] not in eos_idx:
+                eos_idx[i[0]] = i[1]
         idxs_last_output = [eos_idx[i] if i in eos_idx else self.max_tokens - 1 for i in range(full_sentence.shape[0])]
         if pad:
             for s, i in zip(full_sentence, idxs_last_output):
@@ -455,6 +458,7 @@ class DecoderRNN(object):
         return sliced_logits
 
     def cost(self, output, target, sl):
+        sl = (np.asarray(sl) + 1).tolist()  # +1 to seq length for the mask to allow the network to learn the EOS
         # Compute cross entropy for each frame.
         cross_entropy = target * tf.log(tf.clip_by_value(output, 1e-10, 1.0))
         cross_entropy = -tf.reduce_sum(cross_entropy, 2)
