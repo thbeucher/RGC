@@ -223,7 +223,7 @@ class DataContainer(object):
         sources = to_emb(cleaned_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
         sources, seq_lengths, max_sl = pad_data(sources)
         labels, self.num_class = encode_labels(self.data.labels)
-        self.max_tokens = max_sl + 1
+        self.max_tokens = max_sl
 
         # add StartOfSentence token to vocabulary
         self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(cleaned_sources + ['sos'], self.emb)
@@ -390,10 +390,11 @@ class DecoderRNN(object):
         self.max_tokens = max_tokens
         self.epoch = -1
         self.early_stoping = False
+        self.parrot_stopping = False
         self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, name='decoder_lstm_cell')
         self.word_predictor = tf.layers.Dense(len(word2idx), activation=tf.nn.relu, name='decoder_dense_wordpred')
 
-    def forward(self, sos, state):
+    def forward(self, sos, state, x, training=False):
         '''
         Performs forward pass through the decoder network
 
@@ -405,15 +406,19 @@ class DecoderRNN(object):
             -> words_predicted, tensor
             -> words_logits, tensor
         '''
+        x = np.asarray(x)
         output = tf.convert_to_tensor(sos, dtype=tf.float32)
         words_predicted = []
         words_logits = []
-        for _ in range(self.max_tokens):
+        for mt in range(self.max_tokens):
             output, state = self.decoder_cell(output, state)
             logits = self.word_predictor(output)
             logits = tf.nn.softmax(logits)
-            pred_word = tf.argmax(logits, 1).numpy()  # argmax do not provide gradient
-            output = [self.i2e[i] for i in pred_word]
+            pred_word = tf.argmax(logits, 1).numpy()
+            if training:
+                output = x[:,mt,:]
+            else:
+                output = [self.i2e[i] for i in pred_word]
             words_predicted.append(pred_word)
             words_logits.append(logits)
         words_predicted = tf.stack(words_predicted, axis=1)  # stack output to [batch_size, max_tokens]
@@ -451,6 +456,8 @@ class DecoderRNN(object):
         return final_full_sentence
 
     def max_slice(self, logits, y):
+        '''
+        '''
         sliced_logits = []
         for i, s in enumerate(y):
             sliced_logits.append(logits[i,:len(s),:])
@@ -458,8 +465,11 @@ class DecoderRNN(object):
         return sliced_logits
 
     def cost(self, output, target, sl):
+        '''
+        '''
         sl = (np.asarray(sl) + 1).tolist()  # +1 to seq length for the mask to allow the network to learn the EOS
         # Compute cross entropy for each frame.
+        # if we do not clip the value, it produces NAN
         cross_entropy = target * tf.log(tf.clip_by_value(output, 1e-10, 1.0))
         cross_entropy = -tf.reduce_sum(cross_entropy, 2)
         mask = tf.cast(tf.sequence_mask(sl, output.shape[1]), dtype=tf.float32)
@@ -470,7 +480,7 @@ class DecoderRNN(object):
         cross_entropy /= tf.reduce_sum(mask, 1)
         return tf.reduce_mean(cross_entropy)
 
-    def get_loss(self, epoch, sos, state, y, sl, verbose=True):
+    def get_loss(self, epoch, sos, state, y, sl, x, verbose=True):
         '''
         Computes loss from given batch
 
@@ -482,19 +492,9 @@ class DecoderRNN(object):
         Outputs:
             -> loss, float
         '''
-        wp, wl = self.forward(sos, state)
-        # wl = self.max_slice(wl, y)
-
-        # fwp = self.get_sequence(wp, pad=True)
-        # y_pad = tf.convert_to_tensor([s + [len(self.w2i) + 2] * (self.max_tokens - len(s)) for s in y], dtype=tf.float32)
-        # y_pad = tf.convert_to_tensor([s + [self.w2i['eos']] * (self.max_tokens - len(s)) for s in y], dtype=tf.float32)
+        wp, wl = self.forward(sos, state, x, training=True)
 
         loss = self.cost(wl, y, sl)
-        # loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_pad, logits=wl)
-        # loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=wl)
-        # loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y_pad, logits=wl)
-        # loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y_pad, logits=wl)
-        # loss = tf.reduce_mean(loss)
 
         if verbose and epoch != self.epoch:
             predict = tf.cast(tf.argmax(wl, -1), dtype=tf.float32).numpy()
@@ -507,12 +507,14 @@ class DecoderRNN(object):
                     gp_sentence += 1
                 gp_word += sum(np.equal(p[:size], t[:size]))
 
-            acc_words = gp_word / sum(sl)
-            acc_sentences = gp_sentence / len(sl)
+            acc_words = round(gp_word / sum(sl), 3)
+            acc_sentences = round(gp_sentence / len(sl), 3)
 
-            logging.info('Epoch {} -> loss = {} | acc_words = {} | acc_sentences = {}'.format(epoch, loss, round(acc_words, 3),
-                                                                                         round(acc_sentences, 3)))
+            logging.info('Epoch {} -> loss = {} | acc_words = {} | acc_sentences = {}'.format(epoch, loss, acc_words, acc_sentences))
             self.epoch += 1
+
+            if acc_sentences == 1.:
+                self.parrot_stopping = True
 
         return loss
 
@@ -527,23 +529,6 @@ class DecoderRNN(object):
             -> list of string
         '''
         return [' '.join([self.i2w[i] for i in s]) for s in sentences]
-
-
-def gradient_check(dataset, emb_path):
-    dc = DataContainer(dataset, emb_path)
-    x_batch = create_batch(dc.x_te, batch_size=dc.batch_size)
-    y_batch = create_batch(dc.y_p_p_te, batch_size=dc.batch_size)
-    sl_batch = create_batch(dc.sl_te, batch_size=dc.batch_size)
-
-    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
-
-    optimizer = tf.train.AdamOptimizer()
-
-    for epoch in range(300):
-        for x, y, sl in zip(x_batch, y_batch, sl_batch):
-            sos = dc.get_sos_batch_size(len(x))
-            optimizer.minimize(lambda: decoder.get_loss(epoch, sos, decoder.decoder_cell.zero_state(len(x), dtype=tf.float32), y))
-        break
 
 
 def parrot_initialization(dataset, emb_path):
@@ -573,12 +558,12 @@ def parrot_initialization(dataset, emb_path):
 
     def get_loss(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
-        loss = decoder.get_loss(epoch, sos, (cell_state, output), y, sl)
+        loss = decoder.get_loss(epoch, sos, (cell_state, output), y, sl, x)
         return loss
 
     def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
-        wp, wl = decoder.forward(sos, (cell_state, output))
+        wp, wl = decoder.forward(sos, (cell_state, output), x)
 
         fwp = decoder.get_sequence(wp)
         y_idx = np.argmax(y, axis=-1)
@@ -603,11 +588,38 @@ def parrot_initialization(dataset, emb_path):
             # optimizer.apply_gradients(grad_n_vars)
             optimizer.minimize(lambda: get_loss(encoder, decoder, epoch, x, y, sl, sos))
         see_parrot_results(encoder, decoder, epoch, x, y, sl, sos)
-        if decoder.early_stoping:
+        if decoder.parrot_stopping:
             break
 
 
 if __name__ == '__main__':
+    # # TODO:
+    # => Add save & load of model
+    #
+    # => Change decoder behaviour for training
+    #   OLD BEHAVIOUR
+    #  new_w1  new_w2  new_w3
+    #    ^       ^       ^
+    #    |       |       |
+    #   LSTM    LSTM    LSTM
+    #    ^       ^       ^
+    #    |       |       |
+    #   sos    new_w1  new_w2
+    #
+    #   NEW BEHAVIOUR
+    #  new_w1  new_w2  new_w3
+    #    ^       ^       ^
+    #    |       |       |
+    #   LSTM    LSTM    LSTM
+    #    ^       ^       ^
+    #    |       |       |
+    #   sos      w1      w2          where w1, w2 are the word from input sentence
+    # Keep the old behaviour only for inference time (testing)
+    #
+    # => Implement Beam Search
+    #       keep the k best hypothesis at each steps instead of only the best hypothesis
+    #
+    # => Implement Attention mechanism (Badhanau)
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
     argparser.add_argument('--input', metavar='INPUT', default=os.environ['INPUT'], type=str)
     argparser.add_argument('--language', metavar='LANGUAGE', default='en', type=str)
