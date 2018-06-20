@@ -173,9 +173,11 @@ def get_y_parrot(sources, word2onehot, max_sl, pad_with='eos'):
         for w in unidecode(s).lower().split(' '):
             tmp.append(word2onehot[w])
         y_parrot.append(tmp)
+
+        tmp_pad = []
         for _ in range(max_sl - len(tmp)):
-            tmp.append(word2onehot[pad_with])
-        y_parrot_padded.append(tmp)
+            tmp_pad.append(word2onehot[pad_with])
+        y_parrot_padded.append(tmp + tmp_pad)
     return y_parrot, y_parrot_padded
 
 
@@ -216,12 +218,12 @@ class DataContainer(object):
         self.emb = ft.load_model(self.emb_path)
         logging.info('Embeddings loaded.')
         self.data = DataLoader(self.input_file)
-        cleaned_sources = [clean_sentence(s) + ' EOS' for s in self.data.sources]  # add EndOfSentence token
+        cleaned_sources = [clean_sentence(s) + ' eos' for s in self.data.sources]  # add EndOfSentence token
         self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
         sources = to_emb(cleaned_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
         sources, seq_lengths, max_sl = pad_data(sources)
         labels, self.num_class = encode_labels(self.data.labels)
-        self.max_tokens = max_sl + 2
+        self.max_tokens = max_sl + 1
 
         # add StartOfSentence token to vocabulary
         self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(cleaned_sources + ['sos'], self.emb)
@@ -389,7 +391,7 @@ class DecoderRNN(object):
         self.epoch = -1
         self.early_stoping = False
         self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, name='decoder_lstm_cell')
-        self.word_predictor = tf.layers.Dense(len(word2idx), activation=None, name='decoder_dense_wordpred')
+        self.word_predictor = tf.layers.Dense(len(word2idx), activation=tf.nn.relu, name='decoder_dense_wordpred')
 
     def forward(self, sos, state):
         '''
@@ -409,6 +411,7 @@ class DecoderRNN(object):
         for _ in range(self.max_tokens):
             output, state = self.decoder_cell(output, state)
             logits = self.word_predictor(output)
+            logits = tf.nn.softmax(logits)
             pred_word = tf.argmax(logits, 1).numpy()  # argmax do not provide gradient
             output = [self.i2e[i] for i in pred_word]
             words_predicted.append(pred_word)
@@ -444,7 +447,26 @@ class DecoderRNN(object):
             final_full_sentence = [s[:i+1] for s, i in zip(full_sentence, idxs_last_output)]  # i+1 to include the EOS token
         return final_full_sentence
 
-    def get_loss(self, epoch, sos, state, y, verbose=True):
+    def max_slice(self, logits, y):
+        sliced_logits = []
+        for i, s in enumerate(y):
+            sliced_logits.append(logits[i,:len(s),:])
+        # return tf.convert_to_tensor(sliced_logits)
+        return sliced_logits
+
+    def cost(self, output, target, sl):
+        # Compute cross entropy for each frame.
+        cross_entropy = target * tf.log(tf.clip_by_value(output, 1e-10, 1.0))
+        cross_entropy = -tf.reduce_sum(cross_entropy, 2)
+        mask = tf.cast(tf.sequence_mask(sl, output.shape[1]), dtype=tf.float32)
+        # mask = tf.sign(tf.reduce_max(tf.abs(target), 2))
+        cross_entropy *= mask
+        # Average over actual sequence lengths.
+        cross_entropy = tf.reduce_sum(cross_entropy, 1)
+        cross_entropy /= tf.reduce_sum(mask, 1)
+        return tf.reduce_mean(cross_entropy)
+
+    def get_loss(self, epoch, sos, state, y, sl, verbose=True):
         '''
         Computes loss from given batch
 
@@ -457,26 +479,32 @@ class DecoderRNN(object):
             -> loss, float
         '''
         wp, wl = self.forward(sos, state)
+        # wl = self.max_slice(wl, y)
+
         # fwp = self.get_sequence(wp, pad=True)
-        # y_pad = tf.convert_to_tensor([s + [len(self.w2i) + 1] * (self.max_tokens - len(s)) for s in y], dtype=tf.float32)
-        y_pad = tf.convert_to_tensor([s + [self.w2i['eos']] * (self.max_tokens - len(s)) for s in y], dtype=tf.float32)
-        loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_pad, logits=wl)
+        # y_pad = tf.convert_to_tensor([s + [len(self.w2i) + 2] * (self.max_tokens - len(s)) for s in y], dtype=tf.float32)
+        # y_pad = tf.convert_to_tensor([s + [self.w2i['eos']] * (self.max_tokens - len(s)) for s in y], dtype=tf.float32)
+
+        loss = self.cost(wl, y, sl)
+        # loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_pad, logits=wl)
+        # loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=wl)
         # loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y_pad, logits=wl)
         # loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y_pad, logits=wl)
-        loss = tf.reduce_mean(loss)
+        # loss = tf.reduce_mean(loss)
 
         if verbose and epoch != self.epoch:
-            predict = tf.argmax(wl, -1)
-            target = np.argmax(y_pad, -1)
-            input('predict0 -> {} \npredict1 -> {}\n\ntarget0 -> {}\ntarget1 -> {}'.format(predict[0], predict[1], target[0], target[1]))
-            results = tf.cast(tf.equal(predict, target), dtype=tf.float32)
+            predict = tf.cast(tf.argmax(wl, -1), dtype=tf.float32).numpy()
+            target = np.argmax(y, -1)
 
-            nb_good_words = tf.reduce_sum(results).numpy()
-            acc_words = nb_good_words / (len(target) * self.max_tokens)
+            gp_word = 0
+            gp_sentence = 0
+            for p, t, size in zip(predict, target, sl):
+                if np.array_equal(p[:size], t[:size]):
+                    gp_sentence += 1
+                gp_word += sum(np.equal(p[:size], t[:size]))
 
-            nb_good_word_by_sample = tf.reduce_sum(results, axis=1).numpy()
-            mask_full_sentence_ok = np.ones(len(target)) * (self.max_tokens - 1)
-            acc_sentences = np.sum(nb_good_word_by_sample == mask_full_sentence_ok) / len(target)
+            acc_words = gp_word / sum(sl)
+            acc_sentences = gp_sentence / len(sl)
 
             logging.info('Epoch {} -> loss = {} | acc_words = {} | acc_sentences = {}'.format(epoch, loss, round(acc_words, 3),
                                                                                          round(acc_sentences, 3)))
@@ -484,8 +512,17 @@ class DecoderRNN(object):
 
         return loss
 
-    def validation(self):
-        pass
+    def reconstruct_sentences(self, sentences):
+        '''
+        Reconstructs a sentence from a list of index
+
+        Inputs:
+            -> sentences, list of list, sublist = list of index
+
+        Outputs:
+            -> list of string
+        '''
+        return [' '.join([self.i2w[i] for i in s]) for s in sentences]
 
 
 def gradient_check(dataset, emb_path):
@@ -500,7 +537,6 @@ def gradient_check(dataset, emb_path):
 
     for epoch in range(300):
         for x, y, sl in zip(x_batch, y_batch, sl_batch):
-            print(len(x), len(y), len(sl))
             sos = dc.get_sos_batch_size(len(x))
             optimizer.minimize(lambda: decoder.get_loss(epoch, sos, decoder.decoder_cell.zero_state(len(x), dtype=tf.float32), y))
         break
@@ -512,34 +548,62 @@ def parrot_initialization(dataset, emb_path):
     '''
     dc = DataContainer(dataset, emb_path)
     x = [sample for batch in dc.x_train for sample in batch] + dc.x_te
-    y = np.vstack([np.asarray([sample for batch in dc.y_train for sample in batch]), dc.y_te])
+    # y = np.vstack([np.asarray([sample for batch in dc.y_train for sample in batch]), dc.y_te])
     sl = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
-    y_parrot = [sample for batch in dc.y_parrot_batch for sample in batch] + dc.y_p_te
+    y_parrot = [sample for batch in dc.y_parrot_padded_batch for sample in batch] + dc.y_p_p_te
 
     x_batch = create_batch(x, batch_size=dc.batch_size)
     y_parrot_batch = create_batch(y_parrot, batch_size=dc.batch_size)
     sl_batch = create_batch(sl, batch_size=dc.batch_size)
 
     encoder = EncoderRNN(num_class=dc.num_class)
+    optimizer = tf.train.AdamOptimizer()
+    for epoch in range(300):
+        for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
+            optimizer.minimize(lambda: encoder.get_loss(epoch, x, y, seq_length))
+        encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
+        if encoder.early_stoping:
+            break
+
     decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
 
     def get_loss(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
-        loss = decoder.get_loss(epoch, sos, (cell_state, output), y)
+        loss = decoder.get_loss(epoch, sos, (cell_state, output), y, sl)
         return loss
+
+    def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos):
+        output, cell_state = encoder.forward(x, sl)
+        wp, wl = decoder.forward(sos, (cell_state, output))
+
+        fwp = decoder.get_sequence(wp)
+        y_idx = np.argmax(y, axis=-1)
+        target = [s[:size+1] for s, size in zip(y_idx, sl)]
+        target_sentences = decoder.reconstruct_sentences(target)
+
+        predict = decoder.get_sequence(wp)
+        predict_sentences = decoder.reconstruct_sentences(predict)
+
+        with open('parrot_results_extract.txt', 'a') as f:
+            f.write('Epoch {}:\n'.format(epoch))
+            for t, p in zip(target_sentences, predict_sentences):
+                f.write('Target -> ' + t + '\nPred -> ' + p + '\n\n')
+            f.write('\n\n\n\n')
 
     optimizer = tf.train.AdamOptimizer()
 
     for epoch in range(300):
         for x, y, sl in zip(x_batch, y_parrot_batch, sl_batch):
             sos = dc.get_sos_batch_size(len(x))
+            # grad_n_vars = optimizer.compute_gradients(lambda: get_loss(encoder, decoder, epoch, x, y, sl, sos))
+            # optimizer.apply_gradients(grad_n_vars)
             optimizer.minimize(lambda: get_loss(encoder, decoder, epoch, x, y, sl, sos))
+        see_parrot_results(encoder, decoder, epoch, x, y, sl, sos)
         if decoder.early_stoping:
             break
 
 
 if __name__ == '__main__':
-    # tf.convert_to_tensor do not provide gradient
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
     argparser.add_argument('--input', metavar='INPUT', default=os.environ['INPUT'], type=str)
     argparser.add_argument('--language', metavar='LANGUAGE', default='en', type=str)
