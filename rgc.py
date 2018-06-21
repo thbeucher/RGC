@@ -151,14 +151,19 @@ def to_batch(sources, labels, sequence_lengths, batch_size):
     return x_batch, y_batch, seq_length_batch
 
 
-def get_vocabulary(sources, emb):
+def get_vocabulary(sources, emb, unidecode_lower=False):
     '''
     Gets vocabulary from the sources & creates word to index and index to word dictionaries
 
     Inputs:
         -> sources, list of string
+        -> emb,
+        -> unidecode_lower, boolean, whether or not to decode and lowerizing words
     '''
-    vocabulary = list(set([unidecode(w).lower() for s in sources for w in s.split(' ')]))
+    if unidecode_lower:
+        vocabulary = list(set([unidecode(w).lower() for s in sources for w in s.split(' ')]))
+    else:
+        vocabulary = list(set([w for s in sources for w in s.split(' ')]))
     logging.info('Vocabulary size = {}'.format(len(vocabulary)))
     word_to_idx = {w: vocabulary.index(w) for w in vocabulary}
     idx_to_word = {v: k for k, v in word_to_idx.items()}
@@ -170,7 +175,7 @@ def get_y_parrot(sources, word2onehot, max_sl, pad_with='eos'):
     y_parrot, y_parrot_padded = [], []
     for s in sources:
         tmp = []
-        for w in unidecode(s).lower().split(' '):
+        for w in s.split(' '):
             tmp.append(word2onehot[w])
         y_parrot.append(tmp)
 
@@ -219,16 +224,17 @@ class DataContainer(object):
         logging.info('Embeddings loaded.')
         self.data = DataLoader(self.input_file)
         cleaned_sources = [clean_sentence(s) + ' eos' for s in self.data.sources]  # add EndOfSentence token
+        decoded_lowered_sources = [unidecode(s).lower() for s in cleaned_sources]  # decode and lowerize sentences
         self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
-        sources = to_emb(cleaned_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
+        sources = to_emb(decoded_lowered_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
         sources, seq_lengths, max_sl = pad_data(sources)
         labels, self.num_class = encode_labels(self.data.labels)
         self.max_tokens = max_sl
 
         # add StartOfSentence token to vocabulary
-        self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(cleaned_sources + ['sos'], self.emb)
+        self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
         self.word2onehot = one_hot_encoding(list(self.word2idx.keys()))
-        self.y_parrot, self.y_parrot_padded = get_y_parrot(cleaned_sources, self.word2onehot, self.max_tokens)
+        self.y_parrot, self.y_parrot_padded = get_y_parrot(decoded_lowered_sources, self.word2onehot, self.max_tokens)
 
         # _tr = _train | _te = _test
         x_tr, self.x_te, y_tr, self.y_te, sl_tr, self.sl_te, y_p_tr, self.y_p_te, y_p_p_tr,\
@@ -258,7 +264,7 @@ class EncoderRNN(object):
 
         self.pred_layer_test = tf.layers.Dense(num_class, activation=None, name='encoder_classif_dense')
 
-    def forward(self, x, sl, final=True):
+    def forward(self, x, sl, final=True, reverse=True):
         '''
         Performs a forward pass through a rnn
 
@@ -272,6 +278,8 @@ class EncoderRNN(object):
         '''
         state = self.encoder_cell.zero_state(len(x), dtype=tf.float32)  # Initialize LSTM cell state with zeros
         unstacked_x = tf.unstack(x, axis=1)  # unstack the embeddings, shape = [time_steps, batch_size, emb_dim]
+        if reverse:
+            unstacked_x = reversed(unstacked_x)
         outputs, cell_states = [], []
         for input_step in unstacked_x:
             output, state = self.encoder_cell(input_step, state)  # state = (cell_state, hidden_state = output)
@@ -282,9 +290,13 @@ class EncoderRNN(object):
         cell_states = tf.stack(cell_states, axis=1)
 
         if final:
-            idxs_last_output = tf.stack([tf.range(len(x)), sl], axis=1)  # get end index of each sequence
-            final_output = tf.gather_nd(outputs, idxs_last_output)  # retrieve last output for each sequence
-            final_cell_state = tf.gather_nd(cell_states, idxs_last_output)
+            if reverse:
+                final_output = outputs[:,-1,:]
+                final_cell_state = cell_states[:,-1,:]
+            else:
+                idxs_last_output = tf.stack([tf.range(len(x)), sl], axis=1)  # get end index of each sequence
+                final_output = tf.gather_nd(outputs, idxs_last_output)  # retrieve last output for each sequence
+                final_cell_state = tf.gather_nd(cell_states, idxs_last_output)
             return final_output, final_cell_state
         else:
             return outputs, cell_states
@@ -401,11 +413,23 @@ class DecoderRNN(object):
         Inputs:
             -> sos, numpy array, batch of SOS token, shape = [batch_size, emb_dim]
             -> state, lstm_state_tuple (c, h)
+            -> x, numpy array, shape = [batch_size, num_tokens, emb_dim]
+            -> training, boolean, optional, default value to False
 
         Outputs:
             -> words_predicted, tensor
             -> words_logits, tensor
         '''
+        #   INFERENCE BEHAVIOUR                  TRAINING BEHAVIOUR
+        #  new_w1  new_w2  new_w3              new_w1  new_w2  new_w3
+        #    ^       ^       ^                   ^       ^       ^
+        #    |       |       |                   |       |       |
+        #   LSTM    LSTM    LSTM                LSTM    LSTM    LSTM
+        #    ^       ^       ^                   ^       ^       ^
+        #    |       |       |                   |       |       |
+        #   sos    new_w1  new_w2               sos      w1      w2
+        #
+        #   where w1, w2 are the word from input sentence
         x = np.asarray(x)
         output = tf.convert_to_tensor(sos, dtype=tf.float32)
         words_predicted = []
@@ -460,12 +484,21 @@ class DecoderRNN(object):
         '''
         sliced_logits = []
         for i, s in enumerate(y):
-            sliced_logits.append(logits[i,:len(s),:])
+            sliced_logits.append(logits[i,:len(s)+1,:])
         # return tf.convert_to_tensor(sliced_logits)
         return sliced_logits
 
     def cost(self, output, target, sl):
         '''
+        Computes the cross entropy loss with respect to the given sequence lengths
+
+        Inputs:
+            -> output, tensor, the word logits, shape = [batch_size, num_tokens, emb_dim]
+            -> target, tensor or numpy array, same shape as output
+            -> sl, list of int
+
+        Outputs:
+            -> float, the cross entropy loss
         '''
         sl = (np.asarray(sl) + 1).tolist()  # +1 to seq length for the mask to allow the network to learn the EOS
         # Compute cross entropy for each frame.
@@ -595,26 +628,6 @@ def parrot_initialization(dataset, emb_path):
 if __name__ == '__main__':
     # # TODO:
     # => Add save & load of model
-    #
-    # => Change decoder behaviour for training
-    #   OLD BEHAVIOUR
-    #  new_w1  new_w2  new_w3
-    #    ^       ^       ^
-    #    |       |       |
-    #   LSTM    LSTM    LSTM
-    #    ^       ^       ^
-    #    |       |       |
-    #   sos    new_w1  new_w2
-    #
-    #   NEW BEHAVIOUR
-    #  new_w1  new_w2  new_w3
-    #    ^       ^       ^
-    #    |       |       |
-    #   LSTM    LSTM    LSTM
-    #    ^       ^       ^
-    #    |       |       |
-    #   sos      w1      w2          where w1, w2 are the word from input sentence
-    # Keep the old behaviour only for inference time (testing)
     #
     # => Implement Beam Search
     #       keep the k best hypothesis at each steps instead of only the best hypothesis
