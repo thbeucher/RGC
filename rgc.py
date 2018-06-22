@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import tqdm
 import regex
 import random
@@ -7,6 +8,7 @@ import logging
 import argparse
 import numpy as np
 import fasttext as ft
+import multiprocessing
 import tensorflow as tf
 from collections import deque
 from unidecode import unidecode
@@ -249,20 +251,38 @@ class DataContainer(object):
     def get_sos_batch_size(self, batch_size):
         return np.vstack([self.emb['sos']] * batch_size)
 
+    def shuffle_training(self):
+        self.x_train, self.y_train, self.sl_train = shuffle_data(self.x_train, self.y_train, self.sl_train)
+
 
 class EncoderRNN(object):
     '''
     encoder_outputs: [max_time, batch_size, num_units] || encoder_state: [batch_size, num_units]
     '''
     def __init__(self, num_units=150, num_class=5, history_size=5):
+        self.name = 'EncoderRNN'
         self.num_class = num_class
         self.num_units = num_units
         self.epoch = -1
         self.early_stoping = False
         self.validation_history = deque(maxlen=history_size)
         self.encoder_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, name='encoder_lstm_cell')
-
         self.pred_layer_test = tf.layers.Dense(num_class, activation=None, name='encoder_classif_dense')
+
+    def save(self, name=None):
+        name = name if name else self.name
+        save_path = 'models/' + name + '/'
+        if not os.path.isdir(save_path):
+            os.makedirs(save_path)
+        saver = tfe.Saver(self.encoder_cell.variables + self.pred_layer_test.variables)
+        saver.save(save_path)
+
+    def load(self, name=None):
+        self.classifier_predict(np.zeros((32, 16, 300), dtype=np.float32), list(range(2, 34, 1)))
+        saver = tfe.Saver(self.encoder_cell.variables + self.pred_layer_test.variables)
+        name = name if name else self.name
+        save_path = 'models/' + name + '/'
+        saver.restore(save_path)
 
     def forward(self, x, sl, final=True, reverse=True):
         '''
@@ -376,6 +396,7 @@ class EncoderRNN(object):
             self.early_stoping = True
         else:
             self.validation_history.append(accuracy)
+        return accuracy
 
 
 def unitest_encoder(dataset, emb_path):
@@ -385,12 +406,20 @@ def unitest_encoder(dataset, emb_path):
     dc = DataContainer(dataset, emb_path)
     optimizer = tf.train.AdamOptimizer()
     encoder = EncoderRNN(num_class=dc.num_class)
+    save_path = 'models/' + encoder.name + '/'
+    if os.path.isdir(save_path) and os.listdir(save_path):
+        rep = input('Load saved encoder ? (y or n): ')
+        if rep == 'y':
+            encoder.load()
+            encoder.validation('final', dc.x_te, dc.y_te, dc.sl_te)
     for epoch in range(300):
         for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
             optimizer.minimize(lambda: encoder.get_loss(epoch, x, y, seq_length))
         encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
         if encoder.early_stoping:
             break
+        dc.shuffle_training()
+    encoder.save()
 
 
 class DecoderRNN(object):
@@ -406,7 +435,7 @@ class DecoderRNN(object):
         self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, name='decoder_lstm_cell')
         self.word_predictor = tf.layers.Dense(len(word2idx), activation=tf.nn.relu, name='decoder_dense_wordpred')
 
-    def forward(self, sos, state, x, training=False):
+    def forward(self, sos, state, x, sl, training=False):
         '''
         Performs forward pass through the decoder network
 
@@ -438,7 +467,7 @@ class DecoderRNN(object):
             output, state = self.decoder_cell(output, state)
             logits = self.word_predictor(output)
             logits = tf.nn.softmax(logits)
-            pred_word = tf.argmax(logits, 1).numpy()
+            pred_word = tf.argmax(logits, 1).numpy()  # greedy decoding
             if training:
                 output = x[:,mt,:]
             else:
@@ -448,6 +477,12 @@ class DecoderRNN(object):
         words_predicted = tf.stack(words_predicted, axis=1)  # stack output to [batch_size, max_tokens]
         words_logits = tf.stack(words_logits, axis=1)  # stack output to [batch_size, max_tokens, vocab_size]
         return words_predicted, words_logits
+        # print(tf.convert_to_tensor(words_logits).shape)
+        # greedy_decoder_output = tf.nn.ctc_greedy_decoder(words_logits, sl)  # ctc_beam_search_decoder
+        # v, i = greedy_decoder_output[0][0].values.numpy(), greedy_decoder_output[0][0].indices.numpy()
+        # words_predicted = [v[i[[np.where(i[:,0] == k), -1]]][0].tolist() for k in range(len(sos))]
+        # input(words_predicted)
+        # last_sentence = v[i[[np.where(i[:,0] == 31), -1]]]
 
     def get_sequence(self, full_sentence, pad=False):
         '''
@@ -525,7 +560,7 @@ class DecoderRNN(object):
         Outputs:
             -> loss, float
         '''
-        wp, wl = self.forward(sos, state, x, training=True)
+        wp, wl = self.forward(sos, state, x, sl, training=True)
 
         loss = self.cost(wl, y, sl)
 
@@ -564,6 +599,60 @@ class DecoderRNN(object):
         return [' '.join([self.i2w[i] for i in s]) for s in sentences]
 
 
+def pretrain_encoder(encoder, dc, idx=None, queue=None):
+    '''
+    Trains the encoder as a classifier
+
+    Inputs:
+        -> encoder, Encoder instance
+        -> dc, DataContainer instance
+    '''
+    optimizer = tf.train.AdamOptimizer()
+    for epoch in range(300):
+        for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
+            optimizer.minimize(lambda: encoder.get_loss(epoch, x, y, seq_length))
+        acc = encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
+        if encoder.early_stoping:
+            break
+        dc.shuffle_training()
+    if idx is not None and queue:
+        encoder.save(name='{}-{}'.format(encoder.name, idx))
+        queue.put([acc, idx])
+
+
+def choose_encoder(dc, search_size=8):
+    '''
+    Trains search_size encoder and return the best one
+    '''
+    procs = []
+    queue = multiprocessing.Queue()
+    encoder = EncoderRNN(num_class=dc.num_class)
+
+    logging.info('Choosing encoder...')
+    logger = logging.getLogger()
+    logger.disabled = True
+
+    for i in range(search_size):
+        p = multiprocessing.Process(target=pretrain_encoder, args=(encoder, dc, i, queue))
+        procs.append(p)
+        p.start()
+
+    results = []
+    for i in range(len(procs)):
+        results.append(queue.get())
+
+    for process in procs:
+        process.join()
+
+    logger.disabled = False
+
+    results.sort(key=lambda x: x[0], reverse=True)
+    logging.info('Accuracy of the best encoder = {}'.format(results[0][0]))
+    encoder.load(name='{}-{}'.format(encoder.name, results[0][1]))
+    encoder.validation('final', dc.x_te, dc.y_te, dc.sl_te)
+    return encoder
+
+
 def parrot_initialization(dataset, emb_path):
     '''
     Trains the encoder-decoder to reproduce the input
@@ -578,14 +667,9 @@ def parrot_initialization(dataset, emb_path):
     y_parrot_batch = create_batch(y_parrot, batch_size=dc.batch_size)
     sl_batch = create_batch(sl, batch_size=dc.batch_size)
 
-    encoder = EncoderRNN(num_class=dc.num_class)
-    optimizer = tf.train.AdamOptimizer()
-    for epoch in range(300):
-        for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
-            optimizer.minimize(lambda: encoder.get_loss(epoch, x, y, seq_length))
-        encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
-        if encoder.early_stoping:
-            break
+    # encoder = EncoderRNN(num_class=dc.num_class)
+    # pretrain_encoder(encoder, dc)
+    encoder = choose_encoder(dc)
 
     decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
 
@@ -596,7 +680,7 @@ def parrot_initialization(dataset, emb_path):
 
     def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
-        wp, wl = decoder.forward(sos, (cell_state, output), x)
+        wp, wl = decoder.forward(sos, (cell_state, output), x, sl)
 
         fwp = decoder.get_sequence(wp)
         y_idx = np.argmax(y, axis=-1)
@@ -605,6 +689,9 @@ def parrot_initialization(dataset, emb_path):
 
         predict = decoder.get_sequence(wp)
         predict_sentences = decoder.reconstruct_sentences(predict)
+
+        acc = sum([t == p for t, p in zip(target_sentences, predict_sentences)]) / len(target_sentences)
+        logging.info('Accuracy on last test bench = {}'.format(round(acc, 3)))
 
         with open('parrot_results_extract.txt', 'a') as f:
             f.write('Epoch {}:\n'.format(epoch))
@@ -623,6 +710,8 @@ def parrot_initialization(dataset, emb_path):
         see_parrot_results(encoder, decoder, epoch, x, y, sl, sos)
         if decoder.parrot_stopping:
             break
+        # x_batch, y_parrot_batch, sl_batch = shuffle_data(x_batch, y_parrot_batch, sl_batch)
+        # strangely, shuffle data between epoch make the training noisy
 
 
 if __name__ == '__main__':
@@ -645,5 +734,4 @@ if __name__ == '__main__':
     tfe.enable_eager_execution()
 
     # unitest_encoder(args.input, args.emb)
-    # gradient_check(args.input, args.emb)
     parrot_initialization(args.input, args.emb)
