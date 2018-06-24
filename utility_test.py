@@ -1,4 +1,5 @@
 import unittest
+import numpy as np
 import utility as u
 
 
@@ -105,7 +106,7 @@ class CleanSentenceTest(unittest.TestCase):
         self.assertEqual(clean_sentence, 'hello world good morning')
 
 
-class TransformToEmbeddings(unittest.TestCase):
+class TransformToEmbeddingsTest(unittest.TestCase):
     def test_convert_sentence(self):
         fake_emb = {'hello': [1, 2, 3], 'world': [4, 5, 6]}
         se = u.convert_to_emb('hello world', fake_emb)
@@ -115,6 +116,79 @@ class TransformToEmbeddings(unittest.TestCase):
         fake_emb = {'hello': [1, 2, 3], 'world': [4, 5, 6], 'good': [7, 8, 9], 'morning': [10, 11, 12]}
         ses = u.to_emb(['hello world', 'good morning'], fake_emb)
         self.assertEqual([se.tolist() for se in ses], [[[1, 2, 3], [4, 5, 6]], [[7, 8, 9], [10, 11, 12]]])
+
+
+class PadDataTest(unittest.TestCase):
+    def test_pad_with_zeros(self):
+        t = [np.ones((2, 300)), np.ones((5, 300))]
+        pt, sl, max_sl = u.pad_data(t)
+        self.assertEqual(len(pt), 2)
+        self.assertEqual(sl, [1, 4])
+        self.assertEqual(max_sl, 5)
+        self.assertEqual(pt[0].shape, (5, 300))
+        self.assertEqual(pt[1].shape, (5, 300))
+        self.assertTrue(np.array_equal(pt[0][:2,:], np.ones((2, 300))))
+        self.assertTrue(np.array_equal(pt[0][2:,:], np.zeros((3, 300))))
+        self.assertTrue(np.array_equal(pt[1], np.ones((5, 300))))
+
+    def test_pad_with_list(self):
+        t = [np.ones((2, 300)), np.ones((5, 300))]
+        pt, sl, max_sl = u.pad_data(t, pad_with=[7]*300)
+        self.assertEqual(len(pt), 2)
+        self.assertEqual(sl, [1, 4])
+        self.assertEqual(max_sl, 5)
+        self.assertEqual(pt[0].shape, (5, 300))
+        self.assertEqual(pt[1].shape, (5, 300))
+        self.assertTrue(np.array_equal(pt[1], np.ones((5, 300))))
+        self.assertTrue(np.array_equal(pt[0][:2,:], np.ones((2, 300))))
+        self.assertTrue(np.array_equal(pt[0][2:,:], np.ones((3, 300)) * 7))
+
+    def test_pad_with_array(self):
+        t = [np.ones((2, 300)), np.ones((5, 300))]
+        pt, sl, max_sl = u.pad_data(t, pad_with=np.array([7]*300))
+        self.assertEqual(len(pt), 2)
+        self.assertEqual(sl, [1, 4])
+        self.assertEqual(max_sl, 5)
+        self.assertEqual(pt[0].shape, (5, 300))
+        self.assertEqual(pt[1].shape, (5, 300))
+        self.assertTrue(np.array_equal(pt[1], np.ones((5, 300))))
+        self.assertTrue(np.array_equal(pt[0][:2,:], np.ones((2, 300))))
+        self.assertTrue(np.array_equal(pt[0][2:,:], np.ones((3, 300)) * 7))
+
+
+class ShuffleDataTest(unittest.TestCase):
+    def test_one_list(self):
+        mylist = [1, 2, 3, 4, 5]
+        res = u.shuffle_data(mylist)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(len(res[0]), len(mylist))
+        self.assertEqual(len(set(mylist) & set(res[0])), len(mylist))
+        self.assertFalse(mylist == res[0])
+
+    def test_two_list(self):
+        list1, list2 = [1, 2, 3], [4, 5, 6]
+        res = u.shuffle_data(list1, list2)
+        self.assertEqual(len(res), 2)
+        self.assertEqual(len(res[0]), len(list1))
+        self.assertEqual(len(res[1]), len(list1))
+        self.assertEqual(len(set(list1) & set(res[0])), len(list1))
+        self.assertEqual(len(set(list2) & set(res[1])), len(list2))
+        self.assertFalse(list1 == res[0])
+        self.assertFalse(list2 == res[1])
+
+    def test_multiple_list(self):
+        list1, list2, list3 = [1, 2, 3], [4, 5, 6], [7, 8, 9]
+        res = u.shuffle_data(list1, list2, list3)
+        self.assertEqual(len(res), 3)
+        self.assertEqual(len(res[0]), len(list1))
+        self.assertEqual(len(res[1]), len(list2))
+        self.assertEqual(len(res[2]), len(list3))
+        self.assertEqual(len(set(list1) & set(res[0])), len(list1))
+        self.assertEqual(len(set(list2) & set(res[1])), len(list2))
+        self.assertEqual(len(set(list3) & set(res[2])), len(list3))
+        self.assertFalse(list1 == res[0])
+        self.assertFalse(list2 == res[1])
+        self.assertFalse(list3 == res[2])
 
 
 if __name__ == '__main__':

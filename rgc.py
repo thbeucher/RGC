@@ -3,7 +3,6 @@ import sys
 import time
 import tqdm
 import heapq
-import random
 import logging
 import argparse
 import numpy as np
@@ -20,29 +19,6 @@ import utility as u
 import default
 sys.path.append(os.environ['LIBRARY'])
 from library import DataLoader
-
-
-def pad_data(sources, pad_with=None):
-    '''
-    Pads sequences to the same length defined by the biggest one
-
-    Inputs:
-        -> sources, list of numpy array of shape [sequence_length, embedding_dim]
-        -> pad_with, optional, if given, must be a list or numpy array of shape = [emb_dim]
-           leave to None to pad with zeros
-
-    Outputs:
-        -> sentences, list of numpy array, padded sequences
-        -> sequence_lengths, list of int, list of legnth of each sequences
-    '''
-    logging.info('Padding sources...')
-    sequence_lengths = [s.shape[0] - 1 for s in sources]
-    max_seq_length = np.max(sequence_lengths) + 1
-    if pad_with:
-        sentences = [np.vstack([s] + [pad_with] * (max_seq_length - len(s))) for s in sources]
-    else:
-        sentences = [np.pad(s, pad_width=[(0, max_seq_length - s.shape[0]), (0, 0)], mode='constant', constant_values=0) for s in sources]
-    return sentences, sequence_lengths, max_seq_length
 
 
 def encode_labels(labels):
@@ -71,22 +47,6 @@ def one_hot_encoding(labels):
         onehot[uniq_labels.index(l)] = 1.
         labels2onehot[l] = onehot
     return labels2onehot
-
-
-def shuffle_data(*data):
-    '''
-    Shuffles data
-
-    Inputs:
-        -> give as many list as you want
-
-    Outputs:
-        -> shuffled lists
-    '''
-    logging.info('Shuffling data...')
-    to_shuffle = list(zip(*data))
-    random.shuffle(to_shuffle)
-    return [list(map(lambda x: x[i], to_shuffle)) for i in range(len(data))]
 
 
 def to_batch(sources, labels, sequence_lengths, batch_size):
@@ -187,7 +147,7 @@ class DataContainer(object):
         decoded_lowered_sources = [unidecode(s).lower() for s in cleaned_sources]  # decode and lowerize sentences
         self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
         sources = u.to_emb(decoded_lowered_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
-        sources, seq_lengths, max_sl = pad_data(sources, pad_with=self.emb['eos'])
+        sources, seq_lengths, max_sl = u.pad_data(sources, pad_with=self.emb['eos'])
         labels, self.num_class = encode_labels(self.data.labels)
         self.max_tokens = max_sl
 
@@ -201,7 +161,7 @@ class DataContainer(object):
         self.y_p_p_te = train_test_split(sources, labels, seq_lengths, self.y_parrot, self.y_parrot_padded,
                                          test_size=self.test_size, stratify=self.data.labels)
 
-        sources, labels, seq_lengths, y_parrot_shuffled, y_p_p_s = shuffle_data(x_tr, y_tr, sl_tr, y_p_tr, y_p_p_tr)
+        sources, labels, seq_lengths, y_parrot_shuffled, y_p_p_s = u.shuffle_data(x_tr, y_tr, sl_tr, y_p_tr, y_p_p_tr)
         self.y_parrot_batch = u.create_batch(y_parrot_shuffled, batch_size=self.batch_size)
         self.y_parrot_padded_batch = u.create_batch(y_p_p_s, batch_size=self.batch_size)
         self.x_train, self.y_train, self.sl_train = to_batch(sources, labels, seq_lengths, self.batch_size)
@@ -210,7 +170,7 @@ class DataContainer(object):
         return np.vstack([self.emb['sos']] * batch_size)
 
     def shuffle_training(self):
-        self.x_train, self.y_train, self.sl_train = shuffle_data(self.x_train, self.y_train, self.sl_train)
+        self.x_train, self.y_train, self.sl_train = u.shuffle_data(self.x_train, self.y_train, self.sl_train)
 
 
 class EncoderRNN(object):
@@ -248,7 +208,7 @@ class EncoderRNN(object):
 
         Inputs:
             -> x, numpy array, shape = [batch_size, input_dim], example: [batch_size, sequence_length, embedding_dim]
-            -> sl, list of int, the list of sequence length for each sample in given batch
+            -> sl, list of int, list of last sequence indice for each sample in given batch
             -> final, boolean, optional, whether or not to return only the final output and cell state
 
         Outputs:
@@ -285,7 +245,7 @@ class EncoderRNN(object):
 
         Inputs:
             -> x, numpy array, shape = [batch_size, input_dim]
-            -> sl, list of int, list of sequence length
+            -> sl, list of int, list of last sequence indice for each sample
 
         Outputs:
             -> logits, tensor, shape = [batch_size, num_class]
@@ -303,7 +263,7 @@ class EncoderRNN(object):
             -> epoch, int
             -> x, numpy array, shape = [batch_size, input_dim]
             -> y, numpy array, shape = [batch_size, num_class]
-            -> sl, list of int, list of sequence length
+            -> sl, list of int, list of last sequence indice for each sample
             -> verbose, boolean, decide wether or not print the loss & accuracy at each epoch
         '''
         logits = self.classifier_predict(x, sl)
@@ -331,7 +291,7 @@ class EncoderRNN(object):
             -> epoch, int
             -> x_test, numpy array, shape = [num_test_samples, input_dim]
             -> y_test, numpy array, shape = [num_test_samples, num_class]
-            -> sl_test, list of int, list of sequence length
+            -> sl_test, list of int, list of last sequence indice for each sample
 
         Outputs:
             Print validation accuracy and set a boolean (early_stoping) to True
@@ -594,12 +554,11 @@ class DecoderRNN(object):
         Inputs:
             -> output, tensor, the word logits, shape = [batch_size, num_tokens, emb_dim]
             -> target, tensor or numpy array, same shape as output
-            -> sl, list of int
+            -> sl, list of last sequence indice for each sample
 
         Outputs:
             -> float, the cross entropy loss
         '''
-        sl = (np.asarray(sl) + 1).tolist()  # +1 to seq length for the mask to allow the network to learn the EOS
         # Compute cross entropy for each frame.
         # if we do not clip the value, it produces NAN
         cross_entropy = target * tf.log(tf.clip_by_value(output, 1e-10, 1.0))
@@ -626,6 +585,8 @@ class DecoderRNN(object):
         '''
         _, wl = self.forward(sos, state, x, sl, training=True)
 
+        # +1 to sl because sl is a list of sequence length indices ie len(sequence) - 1
+        sl = (np.asarray(sl) + 1).tolist()
         loss = self.cost(wl, y, sl)
 
         if verbose and epoch != self.epoch:
@@ -787,7 +748,7 @@ def parrot_initialization(dataset, emb_path):
             break
         encoder.save(name='Encoder-Decoder/Encoder')
         decoder.save(name='Encoder-Decoder/Decoder')
-        # x_batch, y_parrot_batch, sl_batch = shuffle_data(x_batch, y_parrot_batch, sl_batch)
+        # x_batch, y_parrot_batch, sl_batch = u.shuffle_data(x_batch, y_parrot_batch, sl_batch)
         # strangely, shuffle data between epoch make the training noisy
 
 
