@@ -70,12 +70,14 @@ def to_emb(sentences, emb):
     return [convert_to_emb(s, emb) for s in tqdm.tqdm(sentences)]
 
 
-def pad_data(sources):
+def pad_data(sources, pad_with=None):
     '''
-    Pads sequences to the same length defined by the biggest one (with value 0)
+    Pads sequences to the same length defined by the biggest one
 
     Inputs:
         -> sources, list of numpy array of shape [sequence_length, embedding_dim]
+        -> pad_with, optional, if given, must be a list or numpy array of shape = [emb_dim]
+           leave to None to pad with zeros
 
     Outputs:
         -> sentences, list of numpy array, padded sequences
@@ -84,7 +86,10 @@ def pad_data(sources):
     logging.info('Padding sources...')
     sequence_lengths = [s.shape[0] - 1 for s in sources]
     max_seq_length = np.max(sequence_lengths) + 1
-    sentences = [np.pad(s, pad_width=[(0, max_seq_length - s.shape[0]), (0, 0)], mode='constant', constant_values=0) for s in sources]
+    if pad_with:
+        sentences = [np.vstack([s] + [pad_with] * (max_seq_length - len(s))) for s in sources]
+    else:
+        sentences = [np.pad(s, pad_width=[(0, max_seq_length - s.shape[0]), (0, 0)], mode='constant', constant_values=0) for s in sources]
     return sentences, sequence_lengths, max_seq_length
 
 
@@ -230,7 +235,7 @@ class DataContainer(object):
         decoded_lowered_sources = [unidecode(s).lower() for s in cleaned_sources]  # decode and lowerize sentences
         self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
         sources = to_emb(decoded_lowered_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
-        sources, seq_lengths, max_sl = pad_data(sources)
+        sources, seq_lengths, max_sl = pad_data(sources, pad_with=self.emb['eos'])
         labels, self.num_class = encode_labels(self.data.labels)
         self.max_tokens = max_sl
 
@@ -432,7 +437,6 @@ class DecoderRNN(object):
         self.num_units = num_units
         self.max_tokens = max_tokens
         self.beam_size = beam_size
-        self.history_acc_words = 0.
         self.epoch = -1
         self.early_stoping = False
         self.parrot_stopping = False
@@ -473,7 +477,7 @@ class DecoderRNN(object):
         logits = self.word_predictor(output)  # [batch_size, vocabulary_size]
         return tf.nn.softmax(logits), state
 
-    def forward(self, sos, state, x, sl, training=False):
+    def forward(self, sos, state, x, sl, training=False, greedy=False):
         '''
         Performs forward pass through the decoder network
 
@@ -499,14 +503,17 @@ class DecoderRNN(object):
         #   where w1, w2 are the word from input sentence
         x = np.asarray(x)
         if not training:
-            words_predicted = self.beam_search(sos, state)
+            if greedy:
+                words_predicted = self.greedy_decoding(sos, state)
+            else:
+                # beam_search decoding with beam_size of 1 = greedy_decoding
+                words_predicted = self.beam_search(sos, state)
             words_logits = None
         else:
             output = tf.convert_to_tensor(sos, dtype=tf.float32)
             words_predicted, words_logits = [], []
             for mt in range(self.max_tokens):
-                logits, state = self.prediction(output, state)
-                pred_word = tf.argmax(logits, 1).numpy()  # greedy decoding
+                pred_word, state, logits = self.greedy_forward(output, state)
                 output = x[:,mt,:]
                 words_predicted.append(pred_word)
                 words_logits.append(logits)
@@ -516,9 +523,45 @@ class DecoderRNN(object):
             words_predicted = tf.stack(words_predicted, axis=1)
         return words_predicted, words_logits
 
+    def greedy_forward(self, output, state):
+        '''
+        Performs prediction then an argmax reduction on logits
+
+        Inputs:
+            -> output,
+            -> state,
+
+        Outputs:
+            -> tensor, []
+            -> state, (c, h)
+            -> logits, tensor
+        '''
+        logits, state = self.prediction(output, state)
+        return tf.argmax(logits, 1).numpy(), state, logits
+
+    def greedy_decoding(self, output, state):
+        '''
+        Performs a greedy decoding on each given samples
+
+        Inputs:
+            -> output, list of np array, shape = [num_samples, emb_dim], [sos, sos, ...]
+            -> state, (c, h), c_shape = [num_samples, num_units] = h_shape
+
+        Outputs:
+            -> words_predicted, tensor, shape = [num_samples, max_tokens]
+        '''
+        logging.info('Performs greedy decoding over given samples...')
+        output = tf.convert_to_tensor(output, dtype=tf.float32)
+        words_predicted = []
+        for mt in range(self.max_tokens):
+            pred_word, state, _ = self.greedy_forward(output, state)
+            output = [self.i2e[i] for i in pred_word]
+            words_predicted.append(pred_word)
+        return tf.stack(words_predicted, axis=1)
+
     def beam_search(self, output, state):
         '''
-        Performs beam search decoding on each given sample
+        Performs beam search decoding on each given samples
 
         Inputs:
             -> output, list of np array, shape = [num_samples, emb_dim], [sos, sos, ...]
@@ -648,7 +691,6 @@ class DecoderRNN(object):
             acc_sentences = round(gp_sentence / len(sl), 3)
 
             logging.info('Epoch {} -> loss = {} | acc_words = {} | acc_sentences = {}'.format(epoch, loss, acc_words, acc_sentences))
-            self.history_acc_words = acc_words
             self.epoch += 1
 
             if acc_sentences == 1.:
@@ -729,7 +771,6 @@ def parrot_initialization(dataset, emb_path):
     '''
     dc = DataContainer(dataset, emb_path)
     x_a = [sample for batch in dc.x_train for sample in batch] + dc.x_te
-    # y = np.vstack([np.asarray([sample for batch in dc.y_train for sample in batch]), dc.y_te])
     sl_a = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
     y_parrot_a = [sample for batch in dc.y_parrot_padded_batch for sample in batch] + dc.y_p_p_te
 
@@ -742,9 +783,9 @@ def parrot_initialization(dataset, emb_path):
         loss = decoder.get_loss(epoch, sos, (cell_state, output), y, sl, x)
         return loss
 
-    def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos):
+    def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos, greedy=False):
         output, cell_state = encoder.forward(x, sl)
-        wp, _ = decoder.forward(sos, (cell_state, output), x, sl)
+        wp, _ = decoder.forward(sos, (cell_state, output), x, sl, greedy=greedy)
 
         fwp = decoder.get_sequence(wp)
         y_idx = np.argmax(y, axis=-1)
@@ -786,9 +827,10 @@ def parrot_initialization(dataset, emb_path):
             # grad_n_vars = optimizer.compute_gradients(lambda: get_loss(encoder, decoder, epoch, x, y, sl, sos))
             # optimizer.apply_gradients(grad_n_vars)
             optimizer.minimize(lambda: get_loss(encoder, decoder, epoch, x, y, sl, sos))
-        if decoder.history_acc_words > 0.6:
-            # to reduce training time, compute global accuracy only after reaching a minimum word accuracy
-            see_parrot_results(encoder, decoder, epoch, x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
+        if epoch % 30 == 0:
+            # to reduce training time, compute global accuracy only every 30 epochs
+            see_parrot_results(encoder, decoder, epoch, x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)), greedy=True)
+            # see_parrot_results(encoder, decoder, epoch, x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
         if decoder.parrot_stopping:
             break
         encoder.save(name='Encoder-Decoder/Encoder')
@@ -802,10 +844,7 @@ if __name__ == '__main__':
     # => Add save & load of model
     #   -> currently, encoder save & load works but not Encoder-Decoder
     #
-    # => Implement Beam Search
-    #       keep the k best hypothesis at each steps instead of only the best hypothesis
-    #
-    # => Implement Attention mechanism (Badhanau)
+    # => Implement Attention mechanism (Badhanau or/and Luong)
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
     argparser.add_argument('--input', metavar='INPUT', default=os.environ['INPUT'], type=str)
     argparser.add_argument('--language', metavar='LANGUAGE', default='en', type=str)
