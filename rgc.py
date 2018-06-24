@@ -3,7 +3,6 @@ import sys
 import time
 import tqdm
 import heapq
-import regex
 import random
 import logging
 import argparse
@@ -16,58 +15,11 @@ from unidecode import unidecode
 import tensorflow.contrib.eager as tfe
 from sklearn.model_selection import train_test_split
 
+import utility as u
+
 import default
 sys.path.append(os.environ['LIBRARY'])
 from library import DataLoader
-
-
-def create_batch(iterable, batch_size=None, num_batch=None):
-    '''
-    Creates list of list
-        if you provide batch_size, sublist will be of size batch_size
-        if you provide num_batch, it will split your data into num_batch lists
-    '''
-    assert batch_size or num_batch, 'You have to provide batch_size or num_batch'
-    size = len(iterable)
-    if num_batch:
-        assert num_batch < size
-        p = size // num_batch
-        return [iterable[i:i+p] for i in range(0, size, p)]
-    else:
-        return [iterable[i:i+batch_size] for i in range(0, size, batch_size)]
-
-
-def clean_sentence(sentence):
-    '''
-    Removes double space and punctuation from given string
-    '''
-    return regex.sub(r' +', ' ', regex.sub(r'\p{Punct}', '', sentence)).strip()
-
-
-def convert_to_emb(sentence, emb):
-    '''
-    Converts sentence to matrix with embedding representation of each tokens
-
-    Inputs:
-        -> sentence - string
-        -> emb - fasttext embedding model
-
-    Outpus:
-        -> numpy ndim array - [number_of_token, embedding_dim]
-    '''
-    return np.asarray([emb[w] for w in sentence.split(' ')])
-
-
-def to_emb(sentences, emb):
-    '''
-    Transforms a list of string into a list of numpy array
-
-    Inputs:
-        -> sentences - list of string
-        -> emb_path - string - path to embeddings model
-    '''
-    logging.info('Transform sentences to embedding representation...')
-    return [convert_to_emb(s, emb) for s in tqdm.tqdm(sentences)]
 
 
 def pad_data(sources, pad_with=None):
@@ -153,9 +105,9 @@ def to_batch(sources, labels, sequence_lengths, batch_size):
         -> seq_length_batch, list of list of size batch_size
     '''
     logging.info('Transform data into batch...')
-    x_batch = create_batch(sources, batch_size=batch_size)
-    y_batch = create_batch(labels, batch_size=batch_size)
-    seq_length_batch = create_batch(sequence_lengths, batch_size=batch_size)
+    x_batch = u.create_batch(sources, batch_size=batch_size)
+    y_batch = u.create_batch(labels, batch_size=batch_size)
+    seq_length_batch = u.create_batch(sequence_lengths, batch_size=batch_size)
     return x_batch, y_batch, seq_length_batch
 
 
@@ -231,10 +183,10 @@ class DataContainer(object):
         self.emb = ft.load_model(self.emb_path)
         logging.info('Embeddings loaded.')
         self.data = DataLoader(self.input_file)
-        cleaned_sources = [clean_sentence(s) + ' eos' for s in self.data.sources]  # add EndOfSentence token
+        cleaned_sources = [u.clean_sentence(s) + ' eos' for s in self.data.sources]  # add EndOfSentence token
         decoded_lowered_sources = [unidecode(s).lower() for s in cleaned_sources]  # decode and lowerize sentences
         self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
-        sources = to_emb(decoded_lowered_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
+        sources = u.to_emb(decoded_lowered_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
         sources, seq_lengths, max_sl = pad_data(sources, pad_with=self.emb['eos'])
         labels, self.num_class = encode_labels(self.data.labels)
         self.max_tokens = max_sl
@@ -250,8 +202,8 @@ class DataContainer(object):
                                          test_size=self.test_size, stratify=self.data.labels)
 
         sources, labels, seq_lengths, y_parrot_shuffled, y_p_p_s = shuffle_data(x_tr, y_tr, sl_tr, y_p_tr, y_p_p_tr)
-        self.y_parrot_batch = create_batch(y_parrot_shuffled, batch_size=self.batch_size)
-        self.y_parrot_padded_batch = create_batch(y_p_p_s, batch_size=self.batch_size)
+        self.y_parrot_batch = u.create_batch(y_parrot_shuffled, batch_size=self.batch_size)
+        self.y_parrot_padded_batch = u.create_batch(y_p_p_s, batch_size=self.batch_size)
         self.x_train, self.y_train, self.sl_train = to_batch(sources, labels, seq_lengths, self.batch_size)
 
     def get_sos_batch_size(self, batch_size):
@@ -774,9 +726,9 @@ def parrot_initialization(dataset, emb_path):
     sl_a = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
     y_parrot_a = [sample for batch in dc.y_parrot_padded_batch for sample in batch] + dc.y_p_p_te
 
-    x_batch = create_batch(x_a, batch_size=dc.batch_size)
-    y_parrot_batch = create_batch(y_parrot_a, batch_size=dc.batch_size)
-    sl_batch = create_batch(sl_a, batch_size=dc.batch_size)
+    x_batch = u.create_batch(x_a, batch_size=dc.batch_size)
+    y_parrot_batch = u.create_batch(y_parrot_a, batch_size=dc.batch_size)
+    sl_batch = u.create_batch(sl_a, batch_size=dc.batch_size)
 
     def get_loss(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
