@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import tqdm
+import heapq
 import regex
 import random
 import logging
@@ -423,17 +424,54 @@ def unitest_encoder(dataset, emb_path):
 
 
 class DecoderRNN(object):
-    def __init__(self, word2idx, idx2word, idx2emb, num_units=150, max_tokens=128):
+    def __init__(self, word2idx, idx2word, idx2emb, num_units=150, max_tokens=128, beam_size=10):
+        self.name = 'DecoderRNN'
         self.w2i = word2idx
         self.i2w = idx2word
         self.i2e = idx2emb
         self.num_units = num_units
         self.max_tokens = max_tokens
+        self.beam_size = beam_size
+        self.history_acc_words = 0.
         self.epoch = -1
         self.early_stoping = False
         self.parrot_stopping = False
         self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, name='decoder_lstm_cell')
         self.word_predictor = tf.layers.Dense(len(word2idx), activation=tf.nn.relu, name='decoder_dense_wordpred')
+
+    def save(self, name=None):
+        name = name if name else self.name
+        save_path = 'models/' + name + '/'
+        if not os.path.isdir(save_path):
+            os.makedirs(save_path)
+        saver = tfe.Saver(self.decoder_cell.variables + self.word_predictor.variables)
+        saver.save(save_path)
+
+    def load(self, name=None):
+        sos = np.zeros((32, 300), dtype=np.float32)
+        state = self.decoder_cell.zero_state(32, dtype=tf.float32)
+        self.forward(sos, state, [], list(range(2, 34, 1)))
+        saver = tfe.Saver(self.decoder_cell.variables + self.word_predictor.variables)
+        name = name if name else self.name
+        save_path = 'models/' + name + '/'
+        saver.restore(save_path)
+
+    def prediction(self, output, state):
+        '''
+        Performs a forward pass throught the network and returns the predicted probability
+        for each word in the vocabulary
+
+        Inputs:
+            -> output, tensor, shape = [batch_size, emb_dim]
+            -> state, (c, h)
+
+        Outputs:
+            -> logits, tensor, shape = [batch_size, vocabulary_size]
+            -> state, (c, h)
+        '''
+        output, state = self.decoder_cell(output, state)
+        logits = self.word_predictor(output)  # [batch_size, vocabulary_size]
+        return tf.nn.softmax(logits), state
 
     def forward(self, sos, state, x, sl, training=False):
         '''
@@ -460,29 +498,60 @@ class DecoderRNN(object):
         #
         #   where w1, w2 are the word from input sentence
         x = np.asarray(x)
-        output = tf.convert_to_tensor(sos, dtype=tf.float32)
-        words_predicted = []
-        words_logits = []
-        for mt in range(self.max_tokens):
-            output, state = self.decoder_cell(output, state)
-            logits = self.word_predictor(output)
-            logits = tf.nn.softmax(logits)
-            pred_word = tf.argmax(logits, 1).numpy()  # greedy decoding
-            if training:
+        if not training:
+            words_predicted = self.beam_search(sos, state)
+            words_logits = None
+        else:
+            output = tf.convert_to_tensor(sos, dtype=tf.float32)
+            words_predicted, words_logits = [], []
+            for mt in range(self.max_tokens):
+                logits, state = self.prediction(output, state)
+                pred_word = tf.argmax(logits, 1).numpy()  # greedy decoding
                 output = x[:,mt,:]
-            else:
-                output = [self.i2e[i] for i in pred_word]
-            words_predicted.append(pred_word)
-            words_logits.append(logits)
-        words_predicted = tf.stack(words_predicted, axis=1)  # stack output to [batch_size, max_tokens]
-        words_logits = tf.stack(words_logits, axis=1)  # stack output to [batch_size, max_tokens, vocab_size]
+                words_predicted.append(pred_word)
+                words_logits.append(logits)
+            # [max_tokens, num_sample, vocab_size] to [num_samples, max_tokens, vocab_size]
+            words_logits = tf.stack(words_logits, axis=1)
+            # [max_tokens, num_sample] to [num_samples, max_tokens]
+            words_predicted = tf.stack(words_predicted, axis=1)
         return words_predicted, words_logits
-        # print(tf.convert_to_tensor(words_logits).shape)
-        # greedy_decoder_output = tf.nn.ctc_greedy_decoder(words_logits, sl)  # ctc_beam_search_decoder
-        # v, i = greedy_decoder_output[0][0].values.numpy(), greedy_decoder_output[0][0].indices.numpy()
-        # words_predicted = [v[i[[np.where(i[:,0] == k), -1]]][0].tolist() for k in range(len(sos))]
-        # input(words_predicted)
-        # last_sentence = v[i[[np.where(i[:,0] == 31), -1]]]
+
+    def beam_search(self, output, state):
+        '''
+        Performs beam search decoding on each given sample
+
+        Inputs:
+            -> output, list of np array, shape = [num_samples, emb_dim], [sos, sos, ...]
+            -> state, (c, h), c_shape = [num_samples, num_units] = h_shape
+
+        Outputs:
+            -> words_predicted, tensor, shape = [num_samples, max_tokens]
+        '''
+        logging.info('Performs beam search decoding over given samples...')
+        t = time.time()
+        states = list(zip(tf.unstack(state[0]), tf.unstack(state[1])))
+        words_predicted = []
+        for sample, state in zip(output, states):
+            state = (tf.reshape(state[0], [1, self.num_units]), tf.reshape(state[1], [1, self.num_units]))
+            sample = tf.convert_to_tensor(sample.reshape((1, 300)), dtype=tf.float32)
+            logits, state = self.prediction(sample, state)
+            state = (tf.tile(state[0], [self.beam_size, 1]), tf.tile(state[1], [self.beam_size, 1]))
+            values, indices = tf.nn.top_k(logits, k=self.beam_size)
+            output = [self.i2e[w] for w in indices.numpy()[0]]
+            tree_c, tree_w = values.numpy()[0], [[el] for el in indices.numpy()[0]]
+            for i in range(self.max_tokens - 1):
+                logits, state = self.prediction(output, state)
+                values, indices = tf.nn.top_k(logits, k=self.beam_size)
+                scores = np.ndarray.flatten(np.asarray([el + tree_c[j] for j, el in enumerate(values.numpy())]))
+                words = np.ndarray.flatten(indices.numpy())
+                ordered = heapq.nlargest(self.beam_size, range(len(scores)), scores.take)
+                tree_c = scores[ordered]
+                new_tree_w = [tree_w[(j-(j%self.beam_size))//self.beam_size] + [words[j]] for j in ordered]
+                tree_w = new_tree_w
+                output = [self.i2e[words[j]] for j in ordered]
+            words_predicted.append(tree_w[0])
+        logging.info('Beam search decoding time took = {}s'.format(round(time.time() - t, 3)))
+        return tf.convert_to_tensor(words_predicted)
 
     def get_sequence(self, full_sentence, pad=False):
         '''
@@ -560,7 +629,7 @@ class DecoderRNN(object):
         Outputs:
             -> loss, float
         '''
-        wp, wl = self.forward(sos, state, x, sl, training=True)
+        _, wl = self.forward(sos, state, x, sl, training=True)
 
         loss = self.cost(wl, y, sl)
 
@@ -579,6 +648,7 @@ class DecoderRNN(object):
             acc_sentences = round(gp_sentence / len(sl), 3)
 
             logging.info('Epoch {} -> loss = {} | acc_words = {} | acc_sentences = {}'.format(epoch, loss, acc_words, acc_sentences))
+            self.history_acc_words = acc_words
             self.epoch += 1
 
             if acc_sentences == 1.:
@@ -658,20 +728,14 @@ def parrot_initialization(dataset, emb_path):
     Trains the encoder-decoder to reproduce the input
     '''
     dc = DataContainer(dataset, emb_path)
-    x = [sample for batch in dc.x_train for sample in batch] + dc.x_te
+    x_a = [sample for batch in dc.x_train for sample in batch] + dc.x_te
     # y = np.vstack([np.asarray([sample for batch in dc.y_train for sample in batch]), dc.y_te])
-    sl = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
-    y_parrot = [sample for batch in dc.y_parrot_padded_batch for sample in batch] + dc.y_p_p_te
+    sl_a = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
+    y_parrot_a = [sample for batch in dc.y_parrot_padded_batch for sample in batch] + dc.y_p_p_te
 
-    x_batch = create_batch(x, batch_size=dc.batch_size)
-    y_parrot_batch = create_batch(y_parrot, batch_size=dc.batch_size)
-    sl_batch = create_batch(sl, batch_size=dc.batch_size)
-
-    # encoder = EncoderRNN(num_class=dc.num_class)
-    # pretrain_encoder(encoder, dc)
-    encoder = choose_encoder(dc)
-
-    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
+    x_batch = create_batch(x_a, batch_size=dc.batch_size)
+    y_parrot_batch = create_batch(y_parrot_a, batch_size=dc.batch_size)
+    sl_batch = create_batch(sl_a, batch_size=dc.batch_size)
 
     def get_loss(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
@@ -680,7 +744,7 @@ def parrot_initialization(dataset, emb_path):
 
     def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
-        wp, wl = decoder.forward(sos, (cell_state, output), x, sl)
+        wp, _ = decoder.forward(sos, (cell_state, output), x, sl)
 
         fwp = decoder.get_sequence(wp)
         y_idx = np.argmax(y, axis=-1)
@@ -691,13 +755,28 @@ def parrot_initialization(dataset, emb_path):
         predict_sentences = decoder.reconstruct_sentences(predict)
 
         acc = sum([t == p for t, p in zip(target_sentences, predict_sentences)]) / len(target_sentences)
-        logging.info('Accuracy on last test bench = {}'.format(round(acc, 3)))
+        logging.info('Accuracy on all sentences = {}'.format(round(acc, 3)))
 
         with open('parrot_results_extract.txt', 'a') as f:
             f.write('Epoch {}:\n'.format(epoch))
-            for t, p in zip(target_sentences, predict_sentences):
+            for t, p in zip(target_sentences[:10], predict_sentences[:10]):
                 f.write('Target -> ' + t + '\nPred -> ' + p + '\n\n')
             f.write('\n\n\n\n')
+
+    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
+    if os.path.isdir('models/Encoder-Decoder'):
+        rep = input('Load previously trained Encoder-Decoder? (y or n): ')
+        if rep == 'y':
+            encoder = EncoderRNN(num_class=dc.num_class)
+            encoder.load('Encoder-Decoder/Encoder')
+            decoder.load('Encoder-Decoder/Decoder')
+            see_parrot_results(encoder, decoder, 'final', x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
+            # ERROR, see_parrot_results doesn't dump the same acc with the loaded model than the saved model
+            input()
+        else:
+            encoder = choose_encoder(dc)
+    else:
+        encoder = choose_encoder(dc, search_size=8)
 
     optimizer = tf.train.AdamOptimizer()
 
@@ -707,9 +786,13 @@ def parrot_initialization(dataset, emb_path):
             # grad_n_vars = optimizer.compute_gradients(lambda: get_loss(encoder, decoder, epoch, x, y, sl, sos))
             # optimizer.apply_gradients(grad_n_vars)
             optimizer.minimize(lambda: get_loss(encoder, decoder, epoch, x, y, sl, sos))
-        see_parrot_results(encoder, decoder, epoch, x, y, sl, sos)
+        if decoder.history_acc_words > 0.6:
+            # to reduce training time, compute global accuracy only after reaching a minimum word accuracy
+            see_parrot_results(encoder, decoder, epoch, x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
         if decoder.parrot_stopping:
             break
+        encoder.save(name='Encoder-Decoder/Encoder')
+        decoder.save(name='Encoder-Decoder/Decoder')
         # x_batch, y_parrot_batch, sl_batch = shuffle_data(x_batch, y_parrot_batch, sl_batch)
         # strangely, shuffle data between epoch make the training noisy
 
@@ -717,6 +800,7 @@ def parrot_initialization(dataset, emb_path):
 if __name__ == '__main__':
     # # TODO:
     # => Add save & load of model
+    #   -> currently, encoder save & load works but not Encoder-Decoder
     #
     # => Implement Beam Search
     #       keep the k best hypothesis at each steps instead of only the best hypothesis
