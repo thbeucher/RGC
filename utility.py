@@ -90,3 +90,56 @@ def shuffle_data(*data):
     to_shuffle = list(zip(*data))
     random.shuffle(to_shuffle)
     return [list(map(lambda x: x[i], to_shuffle)) for i in range(len(data))]
+
+
+def encode_labels(labels):
+    '''
+    One hot encodings of labels
+
+    Inputs:
+        -> labels, list of string, list of labels
+
+    Outputs:
+        -> onehot_labels, numpy array of shape [num_samples, num_labels]
+        -> num_labels, int, number of unique labels
+    '''
+    logging.info('Encoding labels...')
+    uniq_labels = list(set(labels))
+    onehot_labels = np.asarray([np.zeros(len(uniq_labels))] * len(labels))
+    for i, l in enumerate(labels):
+        onehot_labels[i][uniq_labels.index(l)] = 1
+    return onehot_labels, len(uniq_labels)
+
+
+def one_hot_encoding(labels):
+    '''
+    Maps one hot encodings of labels with labels name
+
+    Inputs:
+        -> labels, list of string, list of labels
+
+    Outputs:
+        -> labels2onehot, dictionary, map between label name and his one hot encoding
+    '''
+    uniq_labels = list(set(labels))
+    labels2onehot = {}
+    for l in uniq_labels:
+        onehot = np.zeros(len(uniq_labels), dtype=np.float32)
+        onehot[uniq_labels.index(l)] = 1.
+        labels2onehot[l] = onehot
+    return labels2onehot
+
+
+def to_batch(*args, batch_size=1):
+    '''
+    Transforms data into batchs
+
+    Inputs:
+        -> give as many list as you want
+        -> batch_size, int, optional
+
+    Outputs:
+        -> your list transformed into batches
+    '''
+    logging.info('Transform data into batch...')
+    return [create_batch(l, batch_size=batch_size) for l in args]

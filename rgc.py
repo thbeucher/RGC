@@ -21,64 +21,20 @@ sys.path.append(os.environ['LIBRARY'])
 from library import DataLoader
 
 
-def encode_labels(labels):
-    '''
-    One hot encodings of labels
-
-    Inputs:
-        -> labels, list of string, list of labels
-
-    Outputs:
-        -> onehot_labels, numpy array of shape [num_samples, num_labels]
-        -> num_labels, int, number of unique labels
-    '''
-    logging.info('Encoding labels...')
-    uniq_labels = list(set(labels))
-    onehot_labels = np.asarray([np.zeros(len(uniq_labels))] * len(labels))
-    for i, l in enumerate(labels):
-        onehot_labels[i][uniq_labels.index(l)] = 1
-    return onehot_labels, len(uniq_labels)
-
-def one_hot_encoding(labels):
-    uniq_labels = list(set(labels))
-    labels2onehot = {}
-    for l in uniq_labels:
-        onehot = np.zeros(len(uniq_labels), dtype=np.float32)
-        onehot[uniq_labels.index(l)] = 1.
-        labels2onehot[l] = onehot
-    return labels2onehot
-
-
-def to_batch(sources, labels, sequence_lengths, batch_size):
-    '''
-    Transforms data into batchs
-
-    Inputs:
-        -> sources, list
-        -> labels, list
-        -> sequence_lengths, list
-        -> batch_size, int
-
-    Outputs:
-        -> x_batch, list of list of size batch_size
-        -> y_batch, list of list of size batch_size
-        -> seq_length_batch, list of list of size batch_size
-    '''
-    logging.info('Transform data into batch...')
-    x_batch = u.create_batch(sources, batch_size=batch_size)
-    y_batch = u.create_batch(labels, batch_size=batch_size)
-    seq_length_batch = u.create_batch(sequence_lengths, batch_size=batch_size)
-    return x_batch, y_batch, seq_length_batch
-
-
 def get_vocabulary(sources, emb, unidecode_lower=False):
     '''
     Gets vocabulary from the sources & creates word to index and index to word dictionaries
 
     Inputs:
         -> sources, list of string
-        -> emb,
+        -> emb, fasttext embeddings
         -> unidecode_lower, boolean, whether or not to decode and lowerizing words
+
+    Outputs:
+        -> vocabulary, list of string
+        -> word_to_idx, dictionary, map between word and index
+        -> idx_to_word, dictionary, map between index and word
+        -> idx_to_emb, dictionary, map between index and embedding representation
     '''
     if unidecode_lower:
         vocabulary = list(set([unidecode(w).lower() for s in sources for w in s.split(' ')]))
@@ -148,12 +104,12 @@ class DataContainer(object):
         self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
         sources = u.to_emb(decoded_lowered_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
         sources, seq_lengths, max_sl = u.pad_data(sources, pad_with=self.emb['eos'])
-        labels, self.num_class = encode_labels(self.data.labels)
+        labels, self.num_class = u.encode_labels(self.data.labels)
         self.max_tokens = max_sl
 
         # add StartOfSentence token to vocabulary
         self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
-        self.word2onehot = one_hot_encoding(list(self.word2idx.keys()))
+        self.word2onehot = u.one_hot_encoding(list(self.word2idx.keys()))
         self.y_parrot, self.y_parrot_padded = get_y_parrot(decoded_lowered_sources, self.word2onehot, self.max_tokens)
 
         # _tr = _train | _te = _test
@@ -164,7 +120,7 @@ class DataContainer(object):
         sources, labels, seq_lengths, y_parrot_shuffled, y_p_p_s = u.shuffle_data(x_tr, y_tr, sl_tr, y_p_tr, y_p_p_tr)
         self.y_parrot_batch = u.create_batch(y_parrot_shuffled, batch_size=self.batch_size)
         self.y_parrot_padded_batch = u.create_batch(y_p_p_s, batch_size=self.batch_size)
-        self.x_train, self.y_train, self.sl_train = to_batch(sources, labels, seq_lengths, self.batch_size)
+        self.x_train, self.y_train, self.sl_train = u.to_batch(sources, labels, seq_lengths, batch_size=self.batch_size)
 
     def get_sos_batch_size(self, batch_size):
         return np.vstack([self.emb['sos']] * batch_size)
@@ -317,7 +273,7 @@ class EncoderRNN(object):
         return accuracy
 
 
-def unitest_encoder(dataset, emb_path):
+def test_encoder(dataset, emb_path):
     '''
     Run classification test with the encoder model for sanity check
     '''
@@ -769,5 +725,5 @@ if __name__ == '__main__':
 
     tfe.enable_eager_execution()
 
-    # unitest_encoder(args.input, args.emb)
+    # test_encoder(args.input, args.emb)
     parrot_initialization(args.input, args.emb)

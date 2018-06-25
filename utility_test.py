@@ -79,6 +79,19 @@ class CreateBatchTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             batchs = u.create_batch(list(range(10)), num_batch=12)
 
+    def test_to_batch(self):
+        a, b = [1, 2, 3, 4], [5, 6, 7, 8, 9]
+        ab, bb = u.to_batch(a, b, batch_size=2)
+        self.assertEqual(len(ab), 2)
+        self.assertEqual(sum([len(el) for el in ab]), 4)
+        self.assertEqual(ab[0], [1, 2])
+        self.assertEqual(ab[1], [3, 4])
+        self.assertEqual(len(bb), 3)
+        self.assertEqual(sum([len(el) for el in bb]), 5)
+        self.assertEqual(bb[0], [5, 6])
+        self.assertEqual(bb[1], [7, 8])
+        self.assertEqual(bb[2], [9])
+
 
 class CleanSentenceTest(unittest.TestCase):
     def test_remove_double_space(self):
@@ -163,7 +176,6 @@ class ShuffleDataTest(unittest.TestCase):
         self.assertEqual(len(res), 1)
         self.assertEqual(len(res[0]), len(mylist))
         self.assertEqual(len(set(mylist) & set(res[0])), len(mylist))
-        self.assertFalse(mylist == res[0])
 
     def test_two_list(self):
         list1, list2 = [1, 2, 3], [4, 5, 6]
@@ -173,8 +185,6 @@ class ShuffleDataTest(unittest.TestCase):
         self.assertEqual(len(res[1]), len(list1))
         self.assertEqual(len(set(list1) & set(res[0])), len(list1))
         self.assertEqual(len(set(list2) & set(res[1])), len(list2))
-        self.assertFalse(list1 == res[0])
-        self.assertFalse(list2 == res[1])
 
     def test_multiple_list(self):
         list1, list2, list3 = [1, 2, 3], [4, 5, 6], [7, 8, 9]
@@ -186,10 +196,37 @@ class ShuffleDataTest(unittest.TestCase):
         self.assertEqual(len(set(list1) & set(res[0])), len(list1))
         self.assertEqual(len(set(list2) & set(res[1])), len(list2))
         self.assertEqual(len(set(list3) & set(res[2])), len(list3))
-        self.assertFalse(list1 == res[0])
-        self.assertFalse(list2 == res[1])
-        self.assertFalse(list3 == res[2])
 
+
+class EncodingTest(unittest.TestCase):
+    def test_encode_labels(self):
+        labels = ['A', 'B', 'C', 'B']
+        ol, num_class = u.encode_labels(labels)
+        self.assertEqual(num_class, 3)
+        self.assertTrue(isinstance(ol, np.ndarray))
+        self.assertEqual(ol.shape, (4, 3))
+        self.assertEqual(len(set(ol[0]) & set([1, 0, 0])), 2)
+        self.assertEqual(len(set(ol[0]) & set([1, 2, 0])), 2)
+        self.assertEqual(len(set(ol[1]) & set([1, 0, 0])), 2)
+        self.assertEqual(len(set(ol[1]) & set([1, 2, 0])), 2)
+        self.assertEqual(len(set(ol[2]) & set([1, 0, 0])), 2)
+        self.assertEqual(len(set(ol[2]) & set([1, 2, 0])), 2)
+        self.assertEqual(len(set(ol[3]) & set([1, 0, 0])), 2)
+        self.assertEqual(len(set(ol[3]) & set([1, 2, 0])), 2)
+        self.assertEqual(ol[1].tolist(), ol[3].tolist())
+
+    def test_one_hot_encoding(self):
+        labels = ['A', 'B', 'C', 'B']
+        l2o = u.one_hot_encoding(labels)
+        self.assertTrue(isinstance(l2o, dict))
+        self.assertEqual(len(l2o), 3)
+        self.assertEqual(len(set(l2o.keys()) & set(['A', 'B', 'C'])), 3)
+        self.assertEqual(len(set(l2o['A']) & set([1, 0, 0])), 2)
+        self.assertEqual(len(set(l2o['A']) & set([1, 2, 0])), 2)
+        self.assertEqual(len(set(l2o['B']) & set([1, 0, 0])), 2)
+        self.assertEqual(len(set(l2o['B']) & set([1, 2, 0])), 2)
+        self.assertEqual(len(set(l2o['C']) & set([1, 0, 0])), 2)
+        self.assertEqual(len(set(l2o['C']) & set([1, 2, 0])), 2)
 
 if __name__ == '__main__':
     unittest.main()
