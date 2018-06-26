@@ -21,21 +21,6 @@ sys.path.append(os.environ['LIBRARY'])
 from library import DataLoader
 
 
-def get_y_parrot(sources, word2onehot, max_sl, pad_with='eos'):
-    y_parrot, y_parrot_padded = [], []
-    for s in sources:
-        tmp = []
-        for w in s.split(' '):
-            tmp.append(word2onehot[w])
-        y_parrot.append(tmp)
-
-        tmp_pad = []
-        for _ in range(max_sl - len(tmp)):
-            tmp_pad.append(word2onehot[pad_with])
-        y_parrot_padded.append(tmp + tmp_pad)
-    return y_parrot, y_parrot_padded
-
-
 class DataContainer(object):
     def __init__(self, input_file, emb_path, batch_size=32, test_size=0.2):
         '''
@@ -84,7 +69,7 @@ class DataContainer(object):
         # add StartOfSentence token to vocabulary
         self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = u.get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
         self.word2onehot = u.one_hot_encoding(list(self.word2idx.keys()))
-        self.y_parrot, self.y_parrot_padded = get_y_parrot(decoded_lowered_sources)
+        self.y_parrot, self.y_parrot_padded = self.get_y_parrot(decoded_lowered_sources)
 
         # _tr = _train | _te = _test
         x_tr, self.x_te, y_tr, self.y_te, sl_tr, self.sl_te, y_p_tr, self.y_p_te, y_p_p_tr,\
@@ -96,7 +81,7 @@ class DataContainer(object):
         self.y_parrot_padded_batch = u.create_batch(y_p_p_s, batch_size=self.batch_size)
         self.x_train, self.y_train, self.sl_train = u.to_batch(sources, labels, seq_lengths, batch_size=self.batch_size)
 
-    def get_y_parrot(sources, pad_with='eos'):
+    def get_y_parrot(self, sources, pad_with='eos'):
         '''
         Gets y for parrot initilization
 
@@ -115,7 +100,7 @@ class DataContainer(object):
             tmp = [self.word2onehot[w] for w in s.split(' ')]
             y_parrot.append(tmp)
 
-            tmp_pad = tmp + [self.word2onehot[pad_with]] * (self.max_sl - len(tmp))
+            tmp_pad = tmp + [self.word2onehot[pad_with]] * (self.max_tokens - len(tmp))
             y_parrot_padded.append(tmp_pad)
         return y_parrot, y_parrot_padded
 
