@@ -111,31 +111,133 @@ class DataContainer(object):
         self.x_train, self.y_train, self.sl_train = u.shuffle_data(self.x_train, self.y_train, self.sl_train)
 
 
+class PreTrainer(object):
+    def __init__(self, num_class, layer_to_train, history_size=5):
+        self.num_class = num_class
+        self.layer_to_train = layer_to_train
+        self.early_stoping = False
+        self.epoch = -1
+        self.validation_history = deque(maxlen=history_size)
+        self.optimizer = tf.train.AdamOptimizer()
+        self.prediction_layer = tf.layers.Dense(num_class, activation=None, name='prediction_layer')
+
+    def forward(self, x):
+        '''
+        Performs a forward pass then go through a prediction layer to get predicted classes
+
+        Inputs:
+            -> x, numpy array, shape = [batch_size, input_dim]
+
+        Outputs:
+            -> logits, tensor, shape = [batch_size, num_class]
+        '''
+        state = self.layer_to_train.zero_state(len(x), dtype=tf.float32)  # Initialize LSTM cell state with zeros
+        unstacked_x = tf.unstack(x, axis=1)  # unstack the embeddings, shape = [time_steps, batch_size, emb_dim]
+        unstacked_x = reversed(unstacked_x)
+        outputs = []
+        for input_step in unstacked_x:
+            output, state = self.layer_to_train(input_step, state)  # state = (cell_state, hidden_state = output)
+            outputs.append(output)
+        outputs = tf.stack(outputs, axis=1)  # reshape from [times, batch_size, num_units] to [batch_size, times, num_units]
+        logits = self.prediction_layer(output)
+        return logits
+
+    def get_loss(self, epoch, x, y, verbose=True):
+        '''
+        Computes the loss from a forward pass
+
+        Inputs:
+            -> epoch, int
+            -> x, numpy array, shape = [batch_size, input_dim]
+            -> y, numpy array, shape = [batch_size, num_class]
+            -> verbose, boolean, decide wether or not print the loss & accuracy at each epoch
+        '''
+        y_loss = [el.tolist().index(1) for el in y]  # if using sparse_softmax_cross_entropy_with_logits
+        logits = self.forward(x)
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y_loss, logits=logits)
+        loss = tf.reduce_mean(loss)
+
+        if verbose and epoch != self.epoch:
+            predict = tf.argmax(logits, 1).numpy()
+            target = np.argmax(y, 1)
+            accuracy = np.sum(predict == target) / len(target)
+            logging.info('Epoch {} -> loss = {} | acc = {}'.format(epoch, loss, round(accuracy, 3)))
+            self.epoch += 1
+
+        return loss
+
+    def classification_train(self, x, y):
+        '''
+            x = [x_train, x_test]
+            y = [y_train, y_test]
+        '''
+        x_train, x_test = x
+        y_train, y_test = y
+        for epoch in range(300):
+            for x, y in zip(x_train, y_train):
+                self.optimizer.minimize(lambda: self.get_loss(epoch, x, y))
+            acc = self.validation(epoch, x_test, y_test)
+            if self.early_stoping:
+                break
+        return acc
+
+    def validation(self, epoch, x_test, y_test):
+        '''
+        Computes validation accuracy and define an early stoping
+
+        Inputs:
+            -> epoch, int
+            -> x_test, numpy array, shape = [num_test_samples, input_dim]
+            -> y_test, numpy array, shape = [num_test_samples, num_class]
+
+        Outputs:
+            Print validation accuracy and set a boolean (early_stoping) to True
+            if stoping criterias are filled
+
+            Stoping criterias:
+                -> new validation accuracy is lower than all accuracies stored in validation_history
+                -> new accuracy is equal to all accuracies stored in validation_history
+        '''
+        logits = self.forward(x_test)
+        predictions = tf.argmax(logits, 1).numpy()
+        targets = np.argmax(y_test, 1)
+        accuracy = round(np.sum(predictions == targets) / len(targets), 3)
+
+        logging.info('Epoch {} -> Validation accuracy score = {}'.format(epoch, accuracy))
+        preliminary_test = len(self.validation_history) == self.validation_history.maxlen
+        test_decrease = all(accuracy < acc for acc in self.validation_history)
+        test_equal = all(accuracy == acc for acc in self.validation_history)
+
+        if preliminary_test and (test_decrease or test_equal):
+            logging.info('Early stoping criteria raised: {}'.format('decreasing' if test_decrease else 'plateau'))
+            self.early_stoping = True
+        else:
+            self.validation_history.append(accuracy)
+
+        return accuracy
+
+
 class EncoderRNN(object):
     '''
     encoder_outputs: [max_time, batch_size, num_units] || encoder_state: [batch_size, num_units]
     '''
-    def __init__(self, num_units=150, num_class=5, history_size=5):
+    def __init__(self, num_units=150, history_size=5):
         self.name = 'EncoderRNN'
-        self.num_class = num_class
         self.num_units = num_units
-        self.epoch = -1
-        self.early_stoping = False
         self.validation_history = deque(maxlen=history_size)
         self.encoder_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, name='encoder_lstm_cell')
-        self.pred_layer_test = tf.layers.Dense(num_class, activation=None, name='encoder_classif_dense')
 
     def save(self, name=None):
         name = name if name else self.name
         save_path = 'models/' + name + '/'
         if not os.path.isdir(save_path):
             os.makedirs(save_path)
-        saver = tfe.Saver(self.encoder_cell.variables + self.pred_layer_test.variables)
+        saver = tfe.Saver(self.encoder_cell.variables)
         saver.save(save_path)
 
     def load(self, name=None):
-        self.classifier_predict(np.zeros((32, 16, 300), dtype=np.float32), list(range(2, 34, 1)))
-        saver = tfe.Saver(self.encoder_cell.variables + self.pred_layer_test.variables)
+        self.forward(np.zeros((32, 16, 300), dtype=np.float32), list(range(2, 34, 1)))
+        saver = tfe.Saver(self.encoder_cell.variables)
         name = name if name else self.name
         save_path = 'models/' + name + '/'
         saver.restore(save_path)
@@ -176,106 +278,6 @@ class EncoderRNN(object):
             return final_output, final_cell_state
         else:
             return outputs, cell_states
-
-    def classifier_predict(self, x, sl):
-        '''
-        Performs a forward pass then go through a prediction layer to get predicted classes
-
-        Inputs:
-            -> x, numpy array, shape = [batch_size, input_dim]
-            -> sl, list of int, list of last sequence indice for each sample
-
-        Outputs:
-            -> logits, tensor, shape = [batch_size, num_class]
-        '''
-        final_output, final_cell_state = self.forward(x, sl)
-        # dropped_output = tf.layers.dropout(final_output, rate=0.3, training=True)  # regularization
-        logits = self.pred_layer_test(final_output)
-        return logits
-
-    def get_loss(self, epoch, x, y, sl, verbose=True):
-        '''
-        Computes the loss from a forward pass
-
-        Inputs:
-            -> epoch, int
-            -> x, numpy array, shape = [batch_size, input_dim]
-            -> y, numpy array, shape = [batch_size, num_class]
-            -> sl, list of int, list of last sequence indice for each sample
-            -> verbose, boolean, decide wether or not print the loss & accuracy at each epoch
-        '''
-        logits = self.classifier_predict(x, sl)
-
-        # loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=logits)
-        y_loss = [el.tolist().index(1) for el in y]  # if using sparse_softmax_cross_entropy_with_logits
-        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y_loss, logits=logits)
-
-        loss = tf.reduce_mean(loss)
-
-        if verbose and epoch != self.epoch:
-            predict = tf.argmax(logits, 1).numpy()
-            target = np.argmax(y, 1)
-            accuracy = np.sum(predict == target) / len(target)
-            logging.info('Epoch {} -> loss = {} | acc = {}'.format(epoch, loss, round(accuracy, 3)))
-            self.epoch += 1
-
-        return loss
-
-    def validation(self, epoch, x_test, y_test, sl_test):
-        '''
-        Computes validation accuracy and define an early stoping
-
-        Inputs:
-            -> epoch, int
-            -> x_test, numpy array, shape = [num_test_samples, input_dim]
-            -> y_test, numpy array, shape = [num_test_samples, num_class]
-            -> sl_test, list of int, list of last sequence indice for each sample
-
-        Outputs:
-            Print validation accuracy and set a boolean (early_stoping) to True
-            if stoping criterias are filled
-
-            Stoping criterias:
-                -> new validation accuracy is lower than all accuracies stored in validation_history
-                -> new accuracy is equal to all accuracies stored in validation_history
-        '''
-        logits = self.classifier_predict(x_test, sl_test)
-        predictions = tf.argmax(logits, 1).numpy()
-        targets = np.argmax(y_test, 1)
-        accuracy = round(np.sum(predictions == targets) / len(targets), 3)
-        logging.info('Epoch {} -> Validation accuracy score = {}'.format(epoch, accuracy))
-        preliminary_test = len(self.validation_history) == self.validation_history.maxlen
-        test_decrease = all(accuracy < acc for acc in self.validation_history)
-        test_equal = all(accuracy == acc for acc in self.validation_history)
-        if preliminary_test and (test_decrease or test_equal):
-            logging.info('Early stoping criteria raised: {}'.format('decreasing' if test_decrease else 'plateau'))
-            self.early_stoping = True
-        else:
-            self.validation_history.append(accuracy)
-        return accuracy
-
-
-def test_encoder(dataset, emb_path):
-    '''
-    Run classification test with the encoder model for sanity check
-    '''
-    dc = DataContainer(dataset, emb_path)
-    optimizer = tf.train.AdamOptimizer()
-    encoder = EncoderRNN(num_class=dc.num_class)
-    save_path = 'models/' + encoder.name + '/'
-    if os.path.isdir(save_path) and os.listdir(save_path):
-        rep = input('Load saved encoder ? (y or n): ')
-        if rep == 'y':
-            encoder.load()
-            encoder.validation('final', dc.x_te, dc.y_te, dc.sl_te)
-    for epoch in range(300):
-        for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
-            optimizer.minimize(lambda: encoder.get_loss(epoch, x, y, seq_length))
-        encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
-        if encoder.early_stoping:
-            break
-        dc.shuffle_training()
-    encoder.save()
 
 
 class DecoderRNN(object):
@@ -356,8 +358,7 @@ class DecoderRNN(object):
             if greedy:
                 words_predicted = self.greedy_decoding(sos, state)
             else:
-                # beam_search decoding with beam_size of 1 = greedy_decoding
-                words_predicted = self.beam_search(sos, state)
+                words_predicted = self.beam_search(sos, state)  # beam_search decoding with beam_size of 1 = greedy_decoding
             words_logits = None
         else:
             output = tf.convert_to_tensor(sos, dtype=tf.float32)
@@ -369,8 +370,7 @@ class DecoderRNN(object):
                 words_logits.append(logits)
             # [max_tokens, num_sample, vocab_size] to [num_samples, max_tokens, vocab_size]
             words_logits = tf.stack(words_logits, axis=1)
-            # [max_tokens, num_sample] to [num_samples, max_tokens]
-            words_predicted = tf.stack(words_predicted, axis=1)
+            words_predicted = tf.stack(words_predicted, axis=1)  # [max_tokens, num_sample] to [num_samples, max_tokens]
         return words_predicted, words_logits
 
     def greedy_forward(self, output, state):
@@ -523,7 +523,7 @@ class DecoderRNN(object):
         '''
         _, wl = self.forward(sos, state, x, sl, training=True)
 
-        # +1 to sl because sl is a list of sequence length indices ie len(sequence) - 1
+        # +1 to sl because sl is a list of last sequence indices ie len(sequence) - 1
         sl = (np.asarray(sl) + 1).tolist()
         loss = self.cost(wl, y, sl)
 
@@ -570,14 +570,8 @@ def pretrain_encoder(encoder, dc, idx=None, queue=None):
         -> encoder, Encoder instance
         -> dc, DataContainer instance
     '''
-    optimizer = tf.train.AdamOptimizer()
-    for epoch in range(300):
-        for x, y, seq_length in zip(dc.x_train, dc.y_train, dc.sl_train):
-            optimizer.minimize(lambda: encoder.get_loss(epoch, x, y, seq_length))
-        acc = encoder.validation(epoch, dc.x_te, dc.y_te, dc.sl_te)
-        if encoder.early_stoping:
-            break
-        dc.shuffle_training()
+    trainer = PreTrainer(dc.num_class, encoder.encoder_cell)
+    acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train, dc.y_te])
     if idx is not None and queue:
         encoder.save(name='{}-{}'.format(encoder.name, idx))
         queue.put([acc, idx])
@@ -589,7 +583,7 @@ def choose_encoder(dc, search_size=8):
     '''
     procs = []
     queue = multiprocessing.Queue()
-    encoder = EncoderRNN(num_class=dc.num_class)
+    encoder = EncoderRNN()
 
     logging.info('Choosing encoder...')
     logger = logging.getLogger()
@@ -612,7 +606,6 @@ def choose_encoder(dc, search_size=8):
     results.sort(key=lambda x: x[0], reverse=True)
     logging.info('Accuracy of the best encoder = {}'.format(results[0][0]))
     encoder.load(name='{}-{}'.format(encoder.name, results[0][1]))
-    encoder.validation('final', dc.x_te, dc.y_te, dc.sl_te)
     return encoder
 
 
@@ -659,7 +652,7 @@ def parrot_initialization(dataset, emb_path):
     if os.path.isdir('models/Encoder-Decoder'):
         rep = input('Load previously trained Encoder-Decoder? (y or n): ')
         if rep == 'y':
-            encoder = EncoderRNN(num_class=dc.num_class)
+            encoder = EncoderRNN()
             encoder.load('Encoder-Decoder/Encoder')
             decoder.load('Encoder-Decoder/Decoder')
             see_parrot_results(encoder, decoder, 'final', x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
@@ -687,13 +680,15 @@ def parrot_initialization(dataset, emb_path):
         encoder.save(name='Encoder-Decoder/Encoder')
         decoder.save(name='Encoder-Decoder/Decoder')
         # x_batch, y_parrot_batch, sl_batch = u.shuffle_data(x_batch, y_parrot_batch, sl_batch)
-        # strangely, shuffle data between epoch make the training noisy
+        # strangely, shuffle data between epoch make the training realy noisy
 
 
 if __name__ == '__main__':
     # # TODO:
     # => Add save & load of model
     #   -> currently, encoder save & load works but not Encoder-Decoder
+    #
+    # => Add initialization of the decoder
     #
     # => Implement Attention mechanism (Badhanau or/and Luong)
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
@@ -707,5 +702,4 @@ if __name__ == '__main__':
 
     tfe.enable_eager_execution()
 
-    # test_encoder(args.input, args.emb)
     parrot_initialization(args.input, args.emb)
