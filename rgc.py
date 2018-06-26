@@ -303,11 +303,14 @@ class DecoderRNN(object):
         saver = tfe.Saver(self.decoder_cell.variables + self.word_predictor.variables)
         saver.save(save_path)
 
-    def load(self, name=None):
+    def load(self, name=None, only_lstm=False):
         sos = np.zeros((32, 300), dtype=np.float32)
         state = self.decoder_cell.zero_state(32, dtype=tf.float32)
         self.forward(sos, state, [], list(range(2, 34, 1)))
-        saver = tfe.Saver(self.decoder_cell.variables + self.word_predictor.variables)
+        if only_lstm:
+            saver = tfe.Saver(self.decoder_cell.variables)
+        else:
+            saver = tfe.Saver(self.decoder_cell.variables + self.word_predictor.variables)
         name = name if name else self.name
         save_path = 'models/' + name + '/'
         saver.restore(save_path)
@@ -562,7 +565,7 @@ class DecoderRNN(object):
         return [' '.join([self.i2w[i] for i in s]) for s in sentences]
 
 
-def pretrain_encoder(encoder, dc, idx=None, queue=None):
+def pretrain_coder(coder, coder_cell, dc, idx=None, queue=None):
     '''
     Trains the encoder as a classifier
 
@@ -570,43 +573,53 @@ def pretrain_encoder(encoder, dc, idx=None, queue=None):
         -> encoder, Encoder instance
         -> dc, DataContainer instance
     '''
-    trainer = PreTrainer(dc.num_class, encoder.encoder_cell)
+    trainer = PreTrainer(dc.num_class, coder_cell)
     acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train, dc.y_te])
     if idx is not None and queue:
-        encoder.save(name='{}-{}'.format(encoder.name, idx))
+        coder.save(name='{}-{}'.format(coder.name, idx))
         queue.put([acc, idx])
 
 
-def choose_encoder(dc, search_size=8):
+def choose_coders(dc, search_size=8):
     '''
     Trains search_size encoder and return the best one
     '''
-    procs = []
-    queue = multiprocessing.Queue()
     encoder = EncoderRNN()
+    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
 
-    logging.info('Choosing encoder...')
+    logging.info('Choosing coders...')
     logger = logging.getLogger()
     logger.disabled = True
 
-    for i in range(search_size):
-        p = multiprocessing.Process(target=pretrain_encoder, args=(encoder, dc, i, queue))
-        procs.append(p)
-        p.start()
+    def launch(coder, coder_cell, dc, search_size):
+        procs = []
+        queue = multiprocessing.Queue()
 
-    results = []
-    for i in range(len(procs)):
-        results.append(queue.get())
+        for i in range(search_size):
+            p = multiprocessing.Process(target=pretrain_coder, args=(coder, coder_cell, dc, i, queue))
+            procs.append(p)
+            p.start()
 
-    for process in procs:
-        process.join()
+        results = []
+        for i in range(len(procs)):
+            results.append(queue.get())
+
+        for process in procs:
+            process.join()
+        return results
+
+    results_encoder = launch(encoder, encoder.encoder_cell, dc, search_size)
+    results_decoder = launch(decoder, decoder.decoder_cell, dc, search_size)
 
     logger.disabled = False
 
-    results.sort(key=lambda x: x[0], reverse=True)
-    logging.info('Accuracy of the best encoder = {}'.format(results[0][0]))
-    encoder.load(name='{}-{}'.format(encoder.name, results[0][1]))
-    return encoder
+    results_encoder.sort(key=lambda x: x[0], reverse=True)
+    results_decoder.sort(key=lambda x: x[0], reverse=True)
+    logging.info('Accuracy of the best encoder = {}'.format(results_encoder[0][0]))
+    encoder.load(name='{}-{}'.format(encoder.name, results_encoder[0][1]))
+    logging.info('Accuracy of the best decoder = {}'.format(results_decoder[0][0]))
+    decoder.load(name='{}-{}'.format(decoder.name, results_decoder[0][1]), only_lstm=True)
+    return encoder, decoder
 
 
 def parrot_initialization(dataset, emb_path):
@@ -648,20 +661,20 @@ def parrot_initialization(dataset, emb_path):
                 f.write('Target -> ' + t + '\nPred -> ' + p + '\n\n')
             f.write('\n\n\n\n')
 
-    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
     if os.path.isdir('models/Encoder-Decoder'):
         rep = input('Load previously trained Encoder-Decoder? (y or n): ')
         if rep == 'y':
             encoder = EncoderRNN()
+            decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
             encoder.load('Encoder-Decoder/Encoder')
             decoder.load('Encoder-Decoder/Decoder')
             see_parrot_results(encoder, decoder, 'final', x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
             # ERROR, see_parrot_results doesn't dump the same acc with the loaded model than the saved model
-            input()
+            input('ERR')
         else:
-            encoder = choose_encoder(dc)
+            encoder, decoder = choose_coders(dc)
     else:
-        encoder = choose_encoder(dc, search_size=8)
+        encoder, decoder = choose_coders(dc, search_size=8)
 
     optimizer = tf.train.AdamOptimizer()
 
@@ -687,8 +700,6 @@ if __name__ == '__main__':
     # # TODO:
     # => Add save & load of model
     #   -> currently, encoder save & load works but not Encoder-Decoder
-    #
-    # => Add initialization of the decoder
     #
     # => Implement Attention mechanism (Badhanau or/and Luong)
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
