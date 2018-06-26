@@ -228,5 +228,33 @@ class EncodingTest(unittest.TestCase):
         self.assertEqual(len(set(l2o['C']) & set([1, 0, 0])), 2)
         self.assertEqual(len(set(l2o['C']) & set([1, 2, 0])), 2)
 
+
+class GetVocabTest(unittest.TestCase):
+    def test_get_vocabulary(self):
+        sources = ['my name is', 'how are you', 'you live here', 'how is he', 'écrire', 'éCrire']
+        tmp = [e for el in sources for e in el.split(' ')]
+        emb = {el: tmp.index(el) for el in tmp}
+        v, w2i, i2w, i2e = u.get_vocabulary(sources, emb)
+        self.assertTrue(isinstance(v, list))
+        self.assertTrue(isinstance(w2i, dict))
+        self.assertTrue(isinstance(i2w, dict))
+        self.assertTrue(isinstance(i2e, dict))
+        self.assertEqual(len(v), 11)
+        self.assertEqual(set(v), set(tmp))
+        self.assertEqual(set(w2i.keys()), set(tmp))
+        self.assertEqual(set(w2i.values()), set(i2w.keys()))
+        self.assertEqual(set(w2i.values()), set(i2e.keys()))
+        self.assertEqual(len(set(w2i.values())), len(set(tmp)))
+        self.assertEqual(set(i2w.values()), set(tmp))
+        self.assertEqual(i2e[w2i['my']], emb['my'])
+
+    def test_get_vocabulary_unicode_lower(self):
+        sources = ['je veux écrire', 'ecrire et passion', 'élaguer tout']
+        emb = {'je': 1, 'veux': 2, 'ecrire': 3, 'et': 4, 'passion': 5, 'elaguer': 6, 'tout': 7}
+        v, w2i, i2w, i2e = u.get_vocabulary(sources, emb, unidecode_lower=True)
+        self.assertEqual(len(v), 7)
+        self.assertEqual(set(emb.keys()), set(w2i.keys()))
+
+
 if __name__ == '__main__':
     unittest.main()

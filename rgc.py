@@ -21,32 +21,6 @@ sys.path.append(os.environ['LIBRARY'])
 from library import DataLoader
 
 
-def get_vocabulary(sources, emb, unidecode_lower=False):
-    '''
-    Gets vocabulary from the sources & creates word to index and index to word dictionaries
-
-    Inputs:
-        -> sources, list of string
-        -> emb, fasttext embeddings
-        -> unidecode_lower, boolean, whether or not to decode and lowerizing words
-
-    Outputs:
-        -> vocabulary, list of string
-        -> word_to_idx, dictionary, map between word and index
-        -> idx_to_word, dictionary, map between index and word
-        -> idx_to_emb, dictionary, map between index and embedding representation
-    '''
-    if unidecode_lower:
-        vocabulary = list(set([unidecode(w).lower() for s in sources for w in s.split(' ')]))
-    else:
-        vocabulary = list(set([w for s in sources for w in s.split(' ')]))
-    logging.info('Vocabulary size = {}'.format(len(vocabulary)))
-    word_to_idx = {w: vocabulary.index(w) for w in vocabulary}
-    idx_to_word = {v: k for k, v in word_to_idx.items()}
-    idx_to_emb = {v: emb[k] for k, v in word_to_idx.items()}
-    return vocabulary, word_to_idx, idx_to_word, idx_to_emb
-
-
 def get_y_parrot(sources, word2onehot, max_sl, pad_with='eos'):
     y_parrot, y_parrot_padded = [], []
     for s in sources:
@@ -108,9 +82,9 @@ class DataContainer(object):
         self.max_tokens = max_sl
 
         # add StartOfSentence token to vocabulary
-        self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
+        self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = u.get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
         self.word2onehot = u.one_hot_encoding(list(self.word2idx.keys()))
-        self.y_parrot, self.y_parrot_padded = get_y_parrot(decoded_lowered_sources, self.word2onehot, self.max_tokens)
+        self.y_parrot, self.y_parrot_padded = get_y_parrot(decoded_lowered_sources)
 
         # _tr = _train | _te = _test
         x_tr, self.x_te, y_tr, self.y_te, sl_tr, self.sl_te, y_p_tr, self.y_p_te, y_p_p_tr,\
@@ -121,6 +95,29 @@ class DataContainer(object):
         self.y_parrot_batch = u.create_batch(y_parrot_shuffled, batch_size=self.batch_size)
         self.y_parrot_padded_batch = u.create_batch(y_p_p_s, batch_size=self.batch_size)
         self.x_train, self.y_train, self.sl_train = u.to_batch(sources, labels, seq_lengths, batch_size=self.batch_size)
+
+    def get_y_parrot(sources, pad_with='eos'):
+        '''
+        Gets y for parrot initilization
+
+        Inputs:
+            -> sources, list of string
+            -> pad_with, string, optional, default to `eos`
+
+        Outputs:
+            -> y_parrot, list of list, sublists are list of one hot vector
+            -> y_parrot_padded, list of list, same as y_parrot but each sublist are filled with
+               supplementary one hot vector (one hot vector of given pad_with value) in order to
+               have each sublist of the same len
+        '''
+        y_parrot, y_parrot_padded = [], []
+        for s in sources:
+            tmp = [self.word2onehot[w] for w in s.split(' ')]
+            y_parrot.append(tmp)
+
+            tmp_pad = tmp + [self.word2onehot[pad_with]] * (self.max_sl - len(tmp))
+            y_parrot_padded.append(tmp_pad)
+        return y_parrot, y_parrot_padded
 
     def get_sos_batch_size(self, batch_size):
         return np.vstack([self.emb['sos']] * batch_size)

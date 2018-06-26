@@ -3,6 +3,7 @@ import regex
 import random
 import logging
 import numpy as np
+from unidecode import unidecode
 
 
 def create_batch(iterable, batch_size=None, num_batch=None):
@@ -143,3 +144,29 @@ def to_batch(*args, batch_size=1):
     '''
     logging.info('Transform data into batch...')
     return [create_batch(l, batch_size=batch_size) for l in args]
+
+
+def get_vocabulary(sources, emb, unidecode_lower=False):
+    '''
+    Gets vocabulary from the sources & creates word to index and index to word dictionaries
+
+    Inputs:
+        -> sources, list of string (to be interesting, you must clean your sentences before)
+        -> emb, fasttext embeddings
+        -> unidecode_lower, boolean, whether or not to decode and lowerizing words
+
+    Outputs:
+        -> vocabulary, list of string
+        -> word_to_idx, dictionary, map between word and index
+        -> idx_to_word, dictionary, map between index and word
+        -> idx_to_emb, dictionary, map between index and embedding representation
+    '''
+    if unidecode_lower:
+        vocabulary = list(set([unidecode(w).lower() for s in sources for w in s.split(' ')]))
+    else:
+        vocabulary = list(set([w for s in sources for w in s.split(' ')]))
+    logging.info('Vocabulary size = {}'.format(len(vocabulary)))
+    word_to_idx = {w: vocabulary.index(w) for w in vocabulary}
+    idx_to_word = {v: k for k, v in word_to_idx.items()}
+    idx_to_emb = {v: emb[k] for k, v in word_to_idx.items()}
+    return vocabulary, word_to_idx, idx_to_word, idx_to_emb
