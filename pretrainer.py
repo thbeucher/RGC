@@ -108,3 +108,22 @@ class PreTrainer(object):
             self.validation_history.append(accuracy)
 
         return accuracy
+
+
+if __name__ == '__main__':
+    import os
+    import sys
+    import default
+    from encoder import EncoderRNN
+    import tensorflow.contrib.eager as tfe
+    from data_container import DataContainer
+
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+
+    tfe.enable_eager_execution()
+
+    dc = DataContainer(os.environ['INPUT'], os.environ['EMB'])
+    encoder = EncoderRNN()
+    trainer = PreTrainer(dc.num_class, encoder.encoder_cell)
+
+    acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train, dc.y_te])

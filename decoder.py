@@ -20,7 +20,7 @@ class DecoderRNN(object):
         self.early_stoping = False
         self.parrot_stopping = False
         self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, name='decoder_lstm_cell')
-        self.word_predictor = tf.layers.Dense(len(word2idx), activation=tf.nn.relu, name='decoder_dense_wordpred')
+        self.word_predictor = tf.layers.Dense(len(word2idx), activation=None, name='decoder_dense_wordpred')
 
     def save(self, name=None):
         name = name if name else self.name

@@ -12,11 +12,8 @@ from pretrainer import PreTrainer
 import tensorflow.contrib.eager as tfe
 from data_container import DataContainer
 
+import default  # to import os environment variables
 import utility as u
-
-import default
-sys.path.append(os.environ['LIBRARY'])
-from library import DataLoader
 
 
 def pretrain_coder(coder, coder_cell, dc, idx=None, queue=None):
@@ -128,7 +125,7 @@ def parrot_initialization(dataset, emb_path):
         else:
             encoder, decoder = choose_coders(dc)
     else:
-        encoder, decoder = choose_coders(dc, search_size=8)
+        encoder, decoder = choose_coders(dc, search_size=3)
 
     optimizer = tf.train.AdamOptimizer()
 
