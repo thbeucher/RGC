@@ -4,11 +4,12 @@ import logging
 import numpy as np
 from time import time
 import tensorflow as tf
+from attention import AttentionS2S
 import tensorflow.contrib.eager as tfe
 
 
 class DecoderRNN(object):
-    def __init__(self, word2idx, idx2word, idx2emb, num_units=150, max_tokens=128, beam_size=10):
+    def __init__(self, word2idx, idx2word, idx2emb, num_units=150, max_tokens=128, beam_size=10, attention=False):
         self.name = 'DecoderRNN'
         self.w2i = word2idx
         self.i2w = idx2word
@@ -16,11 +17,15 @@ class DecoderRNN(object):
         self.num_units = num_units
         self.max_tokens = max_tokens
         self.beam_size = beam_size
+        self.attention = attention
         self.epoch = -1
         self.early_stoping = False
         self.parrot_stopping = False
         self.decoder_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units, name='decoder_lstm_cell')
         self.word_predictor = tf.layers.Dense(len(word2idx), activation=None, name='decoder_dense_wordpred')
+        if attention:
+            logging.info('Attention mechanism activated for the decoder...')
+            self.attn = AttentionS2S(num_units)
 
     def save(self, name=None):
         name = name if name else self.name
@@ -31,9 +36,11 @@ class DecoderRNN(object):
         saver.save(save_path)
 
     def load(self, name=None, only_lstm=False):
+        x = [np.zeros((25, 300))] * 32
         sos = np.zeros((32, 300), dtype=np.float32)
         state = self.decoder_cell.zero_state(32, dtype=tf.float32)
-        self.forward(sos, state, [], list(range(2, 34, 1)))
+        outputs = np.zeros((32, 25, 150), dtype=np.float32)
+        self.forward(sos, state, x, list(range(2, 34, 1)), outputs, training=True)
         if only_lstm:
             saver = tfe.Saver(self.decoder_cell.variables)
         else:
@@ -48,7 +55,7 @@ class DecoderRNN(object):
         for each word in the vocabulary
 
         Inputs:
-            -> output, tensor, shape = [batch_size, emb_dim]
+            -> output, tensor, shape = [batch_size, cell_size]
             -> state, (c, h)
 
         Outputs:
@@ -56,10 +63,14 @@ class DecoderRNN(object):
             -> state, (c, h)
         '''
         output, state = self.decoder_cell(output, state)
+
+        if self.attention:
+            self.attn.forward(output, self.encoder_outputs)
+
         logits = self.word_predictor(output)  # [batch_size, vocabulary_size]
         return tf.nn.softmax(logits), state
 
-    def forward(self, sos, state, x, sl, training=False, greedy=False):
+    def forward(self, sos, state, x, sl, encoder_outputs, training=False, greedy=False):
         '''
         Performs forward pass through the decoder network
 
@@ -83,6 +94,7 @@ class DecoderRNN(object):
         #   sos    new_w1  new_w2               sos      w1      w2
         #
         #   where w1, w2 are the word from input sentence
+        self.encoder_outputs = encoder_outputs
         x = np.asarray(x)
         if not training:
             if greedy:
@@ -217,7 +229,19 @@ class DecoderRNN(object):
 
     def cost(self, output, target, sl):
         '''
-        Computes the cross entropy loss with respect to the given sequence lengths
+        Computes the cross entropy loss with respect to the given sequence lengths.
+
+        Cross entropy indicates the distance between what the model believes the output distribution should be,
+        and what the original distribution really is.
+
+        Suppose you have a fixed model which predict for n class their hypothetical occurence
+        probabilities y1, y2, ..., yn. Suppose that you now observe (in reality) k1 instance of
+        class1, k2 instance of class2, ..., kn instance of classn. According to your model,
+        the log likelihood of this happening is P(data|model) = y1^k1.y2^k2...yn^kn
+        Take the log and changind the sign: -log(P(data|model)) = -sum( ki.log(yi) )i (ie sum on i)
+        If you now divide the righ-hand sum by the number of observations N = k1 + k2 + ... + kn
+        and denote the empirical probabilities as ÿi = ki/N, you'll get the cross-entropy:
+        -(1/N)log(P(data|model)) = -(1/N)sum( ki.log(yi) )i = - sum( ÿi.log(y) )i
 
         Inputs:
             -> output, tensor, the word logits, shape = [batch_size, num_tokens, emb_dim]
@@ -239,7 +263,7 @@ class DecoderRNN(object):
         cross_entropy /= tf.reduce_sum(mask, 1)
         return tf.reduce_mean(cross_entropy)
 
-    def get_loss(self, epoch, sos, state, y, sl, x, verbose=True):
+    def get_loss(self, epoch, sos, state, y, sl, x, encoder_outputs, verbose=True):
         '''
         Computes loss from given batch
 
@@ -251,7 +275,7 @@ class DecoderRNN(object):
         Outputs:
             -> loss, float
         '''
-        _, wl = self.forward(sos, state, x, sl, training=True)
+        _, wl = self.forward(sos, state, x, sl, encoder_outputs, training=True)
 
         # +1 to sl because sl is a list of last sequence indices ie len(sequence) - 1
         sl = (np.asarray(sl) + 1).tolist()

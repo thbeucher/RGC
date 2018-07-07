@@ -1,4 +1,5 @@
 import os
+import ast
 import sys
 import tqdm
 import logging
@@ -31,12 +32,12 @@ def pretrain_coder(coder, coder_cell, dc, idx=None, queue=None):
         queue.put([acc, idx])
 
 
-def choose_coders(dc, search_size=8):
+def choose_coders(dc, attention, search_size=8):
     '''
     Trains search_size encoder and return the best one
     '''
     encoder = EncoderRNN()
-    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
+    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens, attention=attention)
 
     logging.info('Choosing coders...')
     logger = logging.getLogger()
@@ -73,7 +74,7 @@ def choose_coders(dc, search_size=8):
     return encoder, decoder
 
 
-def parrot_initialization(dataset, emb_path):
+def parrot_initialization(dataset, emb_path, attention):
     '''
     Trains the encoder-decoder to reproduce the input
     '''
@@ -88,12 +89,12 @@ def parrot_initialization(dataset, emb_path):
 
     def get_loss(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
-        loss = decoder.get_loss(epoch, sos, (cell_state, output), y, sl, x)
+        loss = decoder.get_loss(epoch, sos, (cell_state, output), y, sl, x, encoder.outputs)
         return loss
 
     def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos, greedy=False):
         output, cell_state = encoder.forward(x, sl)
-        wp, _ = decoder.forward(sos, (cell_state, output), x, sl, greedy=greedy)
+        wp, _ = decoder.forward(sos, (cell_state, output), x, sl, encoder.outputs, greedy=greedy)
 
         fwp = decoder.get_sequence(wp)
         y_idx = np.argmax(y, axis=-1)
@@ -116,16 +117,16 @@ def parrot_initialization(dataset, emb_path):
         rep = input('Load previously trained Encoder-Decoder? (y or n): ')
         if rep == 'y':
             encoder = EncoderRNN()
-            decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
+            decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens, attention=attention)
             encoder.load('Encoder-Decoder/Encoder')
             decoder.load('Encoder-Decoder/Decoder')
             see_parrot_results(encoder, decoder, 'final', x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
             # ERROR, see_parrot_results doesn't dump the same acc with the loaded model than the saved model
             input('ERR')
         else:
-            encoder, decoder = choose_coders(dc)
+            encoder, decoder = choose_coders(dc, attention, search_size=5)
     else:
-        encoder, decoder = choose_coders(dc, search_size=3)
+        encoder, decoder = choose_coders(dc, attention, search_size=5)
 
     optimizer = tf.train.AdamOptimizer()
 
@@ -158,10 +159,11 @@ if __name__ == '__main__':
     argparser.add_argument('--language', metavar='LANGUAGE', default='en', type=str)
     argparser.add_argument('--key', metavar='KEY', default='test', type=str)
     argparser.add_argument('--emb', metavar='EMB', default=os.environ['EMB'], type=str)
+    argparser.add_argument('--attention', metavar='ATTENTION', default='False', type=ast.literal_eval)
     args = argparser.parse_args()
 
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
     tfe.enable_eager_execution()
 
-    parrot_initialization(args.input, args.emb)
+    parrot_initialization(args.input, args.emb, args.attention)

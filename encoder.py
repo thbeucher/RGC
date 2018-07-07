@@ -30,17 +30,18 @@ class EncoderRNN(object):
         save_path = 'models/' + name + '/'
         saver.restore(save_path)
 
-    def forward(self, x, sl, final=True, reverse=True):
+    def forward(self, x, sl, reverse=True):
         '''
         Performs a forward pass through a rnn
 
         Inputs:
             -> x, numpy array, shape = [batch_size, input_dim], example: [batch_size, sequence_length, embedding_dim]
             -> sl, list of int, list of last sequence indice for each sample in given batch
-            -> final, boolean, optional, whether or not to return only the final output and cell state
+            -> reverse, boolean, optional, whether to go through the sentence in a reverse manner
 
         Outputs:
             -> final_output, numpy array, shape = [batch_size, cell_size]
+            ps: if you want all outputs and all cell states you can acces to outputs & cell_states attribute
         '''
         state = self.encoder_cell.zero_state(len(x), dtype=tf.float32)  # Initialize LSTM cell state with zeros
         unstacked_x = tf.unstack(x, axis=1)  # unstack the embeddings, shape = [time_steps, batch_size, emb_dim]
@@ -52,17 +53,14 @@ class EncoderRNN(object):
             outputs.append(output)
             cell_states.append(state[0])
         # outputs shape = [time_steps, batch_size, cell_size]
-        outputs = tf.stack(outputs, axis=1)  # Stack outputs to (batch_size, time_steps, cell_size)
-        cell_states = tf.stack(cell_states, axis=1)
+        self.outputs = tf.stack(outputs, axis=1)  # Stack outputs to (batch_size, time_steps, cell_size)
+        self.cell_states = tf.stack(cell_states, axis=1)
 
-        if final:
-            if reverse:
-                final_output = outputs[:,-1,:]
-                final_cell_state = cell_states[:,-1,:]
-            else:
-                idxs_last_output = tf.stack([tf.range(len(x)), sl], axis=1)  # get end index of each sequence
-                final_output = tf.gather_nd(outputs, idxs_last_output)  # retrieve last output for each sequence
-                final_cell_state = tf.gather_nd(cell_states, idxs_last_output)
-            return final_output, final_cell_state
+        if reverse:
+            final_output = self.outputs[:,-1,:]
+            final_cell_state = self.cell_states[:,-1,:]
         else:
-            return outputs, cell_states
+            idxs_last_output = tf.stack([tf.range(len(x)), sl], axis=1)  # get end index of each sequence
+            final_output = tf.gather_nd(self.outputs, idxs_last_output)  # retrieve last output for each sequence
+            final_cell_state = tf.gather_nd(self.cell_states, idxs_last_output)
+        return final_output, final_cell_state
