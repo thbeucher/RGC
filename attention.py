@@ -5,33 +5,38 @@ import tensorflow as tf
 
 
 class AttentionS2S(object):
-    def __init__(self, hidden_size, type='luong'):
-        self.available_score_functions = {'luong': self.luong_score, 'badhanau': self.badhanau_score}
+    def __init__(self, hidden_size, type='dot', attention_size=200):
+        self.available_score_functions = {'luong': self.luong_scores, 'badhanau': self.badhanau_score, 'dot': self.dot_scores}
         self.hidden_size = hidden_size
         self.type = type
         self.score_fn = self.available_score_functions[type]
+        self.attention = tf.layers.Dense(attention_size, activation=None)
 
     def forward(self, hidden, encoder_outputs):
-        '''
-        '''
-        # hidden shape = [batch_size, cell_size]
-        # encoder_outputs shape = [batch_size, time_steps, cell_size]
-        encoder_outputs = tf.unstack(encoder_outputs, axis=1)
-        scores = [self.score_fn(hidden, eh) for eh in encoder_outputs]  # very slow
-        attention_weights = tf.nn.softmax(scores)
-        # attention_weights shape = [time_steps, batch_size, cell_size]
-        context_vector = tf.multiply(attention_weights, encoder_outputs)
-        # context_vector shape = [time_steps, batch_size, cell_size]
-        context_vector = tf.unstack(context_vector, axis=0)
-        context_vector.append(hidden)
-        attention_vector = tf.stack(context_vector, axis=1)
-        # attention_vector shape = [batch_size, time_steps + 1, cell_size]
+        encoder_outputs = tf.convert_to_tensor(encoder_outputs, dtype=tf.float32)  # [batch_size, time_steps, cell_size]
+        scores = self.score_fn(hidden, encoder_outputs)
+        attention_weights = tf.nn.softmax(scores)  # [batch_size, time_steps]
+        aws = tf.stack([attention_weights] * self.hidden_size, axis=2)  # [batch_size, time_steps, cell_size]
+        context_vector = tf.multiply(aws, encoder_outputs)
+        # expand_dims alow to go to [batch_size, 1, cell_size] from [batch_size, cell_size]
+        # con = [batch_size, time_steps + 1, cell_size]
+        con = tf.concat([context_vector, tf.expand_dims(hidden, axis=1)], 1)
+        attention_vector = self.attention(con)
         return attention_vector
 
-    def luong_score(self, hidden, encoder_output):
+    def luong_scores(self, hidden, encoder_outputs):
         attention = tf.layers.dense(hidden, self.hidden_size, activation=None, use_bias=False)
-        # attention shape = [batch_size, cell_size]
-        return tf.multiply(attention, encoder_output)
+        return tf.einsum('ijk->jk', tf.einsum('ij,klj', hidden, encoder_outputs))
+
+    def dot_scores(self, hidden, encoder_outputs):
+        '''
+        hidden -> [batch_size, cell_size]
+        encoder_outputs -> [batch_size, time_steps, cell_size]
+
+        return -> [batch_size, time_steps]
+        it returns one weight for each time step for each given samples
+        '''
+        return tf.einsum('ijk->jk', tf.einsum('ij,klj', hidden, encoder_outputs))
 
     def badhanau_score(self, hidden, encoder_output):
         pass
