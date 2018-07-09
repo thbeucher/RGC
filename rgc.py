@@ -15,7 +15,7 @@ if __name__ == '__main__':
     # => Add save & load of model
     #   -> currently, encoder save & load works but not Encoder-Decoder
     #
-    # => Luong attention implemented but slow and maybe not good
+    # => Luong attention implemented but the attention vector is not feed as the decoder input
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
     argparser.add_argument('--input', metavar='INPUT', default=os.environ['INPUT'], type=str)
     argparser.add_argument('--language', metavar='LANGUAGE', default='en', type=str)

@@ -5,12 +5,13 @@ import tensorflow as tf
 
 
 class AttentionS2S(object):
-    def __init__(self, hidden_size, type='dot', attention_size=200):
+    def __init__(self, hidden_size, type='dot', attention_size=200, attention=True):
         self.available_score_functions = {'luong': self.luong_scores, 'badhanau': self.badhanau_score, 'dot': self.dot_scores}
         self.hidden_size = hidden_size
         self.type = type
+        self.attention = attention
         self.score_fn = self.available_score_functions[type]
-        self.attention = tf.layers.Dense(attention_size, activation=None)
+        self.attention_layer = tf.layers.Dense(attention_size, activation=None)
 
     def forward(self, hidden, encoder_outputs):
         encoder_outputs = tf.convert_to_tensor(encoder_outputs, dtype=tf.float32)  # [batch_size, time_steps, cell_size]
@@ -21,7 +22,7 @@ class AttentionS2S(object):
         # expand_dims alow to go to [batch_size, 1, cell_size] from [batch_size, cell_size]
         # con = [batch_size, time_steps + 1, cell_size]
         con = tf.concat([context_vector, tf.expand_dims(hidden, axis=1)], 1)
-        attention_vector = self.attention(con)
+        attention_vector = self.attention_layer(con) if self.attention else con
         return attention_vector
 
     def luong_scores(self, hidden, encoder_outputs):
