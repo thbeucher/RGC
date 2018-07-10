@@ -27,7 +27,9 @@ class AttentionS2S(object):
 
     def luong_scores(self, hidden, encoder_outputs):
         attention = tf.layers.dense(hidden, self.hidden_size, activation=None, use_bias=False)
-        return tf.einsum('ijk->jk', tf.einsum('ij,klj', hidden, encoder_outputs))
+        scores = tf.einsum('ij,klj', hidden, encoder_outputs)
+        idx_to_keep = [[i, i] for i in range(scores.shape[0])]
+        return tf.gather_nd(scores, idx_to_keep)
 
     def dot_scores(self, hidden, encoder_outputs):
         '''
@@ -37,7 +39,9 @@ class AttentionS2S(object):
         return -> [batch_size, time_steps]
         it returns one weight for each time step for each given samples
         '''
-        return tf.einsum('ijk->jk', tf.einsum('ij,klj', hidden, encoder_outputs))
+        scores = tf.einsum('ij,klj', hidden, encoder_outputs)
+        idx_to_keep = [[i, i] for i in range(scores.shape[0])]
+        return tf.gather_nd(scores, idx_to_keep)
 
     def badhanau_score(self, hidden, encoder_output):
         pass
