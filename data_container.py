@@ -3,6 +3,7 @@ import sys
 import logging
 import numpy as np
 import utility as u
+import pickle as pk
 import fasttext as ft
 from unidecode import unidecode
 from sklearn.model_selection import train_test_split
@@ -41,6 +42,30 @@ class DataContainer(object):
         self.test_size = test_size
         self.prepare_data()
 
+    def save_dicts(self, path='data/'):
+        with open(path + 'vocab.pk', 'wb') as f:
+            pk.dump(self.vocabulary, f)
+        with open(path + 'w2i.pk', 'wb') as f:
+            pk.dump(self.word2idx, f)
+        with open(path + 'i2w.pk', 'wb') as f:
+            pk.dump(self.idx2word, f)
+        with open(path + 'i2e.pk', 'wb') as f:
+            pk.dump(self.idx2emb, f)
+        with open(path + 'w2o.pk', 'wb') as f:
+            pk.dump(self.word2onehot, f)
+
+    def load_dicts(self, path='data/'):
+        with open(path + 'vocab.pk', 'rb') as f:
+            self.vocabulary = pk.load(f)
+        with open(path + 'w2i.pk', 'rb') as f:
+            self.word2idx = pk.load(f)
+        with open(path + 'i2w.pk', 'rb') as f:
+            self.idx2word = pk.load(f)
+        with open(path + 'i2e.pk', 'rb') as f:
+            self.idx2emb = pk.load(f)
+        with open(path + 'w2o.pk', 'rb') as f:
+            self.word2onehot = pk.load(f)
+
     def prepare_data(self):
         '''
         Loads & prepares training data into batches
@@ -58,8 +83,13 @@ class DataContainer(object):
         self.max_tokens = max_sl
 
         # add StartOfSentence token to vocabulary
-        self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = u.get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
-        self.word2onehot = u.one_hot_encoding(list(self.word2idx.keys()))
+        rep = input('Load dictionaries? (y or n): ')
+        if rep == 'y':
+            self.load_dicts()
+        else:
+            self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = u.get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
+            self.word2onehot = u.one_hot_encoding(list(self.word2idx.keys()))
+            self.save_dicts()
         self.y_parrot, self.y_parrot_padded = self.get_y_parrot(decoded_lowered_sources)
 
         # _tr = _train | _te = _test

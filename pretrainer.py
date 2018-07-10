@@ -173,6 +173,27 @@ def choose_coders(dc, attention, search_size=8):
     return encoder, decoder
 
 
+def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos, greedy=False):
+    output, cell_state = encoder.forward(x, sl)
+    wp, _ = decoder.forward(sos, (cell_state, output), x, sl, encoder.outputs, greedy=greedy)
+
+    y_idx = np.argmax(y, axis=-1)
+    target = [s[:size+1] for s, size in zip(y_idx, sl)]
+    target_sentences = decoder.reconstruct_sentences(target)
+
+    predict = decoder.get_sequence(wp)
+    predict_sentences = decoder.reconstruct_sentences(predict)
+
+    acc = sum([t == p for t, p in zip(target_sentences, predict_sentences)]) / len(target_sentences)
+    logging.info('Accuracy on all sentences = {}'.format(round(acc, 3)))
+
+    with open('parrot_results_extract.txt', 'a') as f:
+        f.write('Epoch {}:\n'.format(epoch))
+        for t, p in zip(target_sentences[:10], predict_sentences[:10]):
+            f.write('Target -> ' + t + '\nPred -> ' + p + '\n\n')
+        f.write('\n\n\n\n')
+
+
 def parrot_initialization(dataset, emb_path, attention):
     '''
     Trains the encoder-decoder to reproduce the input
@@ -191,37 +212,14 @@ def parrot_initialization(dataset, emb_path, attention):
         loss = decoder.get_loss(epoch, sos, (cell_state, output), y, sl, x, encoder.outputs)
         return loss
 
-    def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos, greedy=False):
-        output, cell_state = encoder.forward(x, sl)
-        wp, _ = decoder.forward(sos, (cell_state, output), x, sl, encoder.outputs, greedy=greedy)
-
-        fwp = decoder.get_sequence(wp)
-        y_idx = np.argmax(y, axis=-1)
-        target = [s[:size+1] for s, size in zip(y_idx, sl)]
-        target_sentences = decoder.reconstruct_sentences(target)
-
-        predict = decoder.get_sequence(wp)
-        predict_sentences = decoder.reconstruct_sentences(predict)
-
-        acc = sum([t == p for t, p in zip(target_sentences, predict_sentences)]) / len(target_sentences)
-        logging.info('Accuracy on all sentences = {}'.format(round(acc, 3)))
-
-        with open('parrot_results_extract.txt', 'a') as f:
-            f.write('Epoch {}:\n'.format(epoch))
-            for t, p in zip(target_sentences[:10], predict_sentences[:10]):
-                f.write('Target -> ' + t + '\nPred -> ' + p + '\n\n')
-            f.write('\n\n\n\n')
-
     if os.path.isdir('models/Encoder-Decoder'):
         rep = input('Load previously trained Encoder-Decoder? (y or n): ')
         if rep == 'y':
             encoder = EncoderRNN()
             decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens, attention=attention)
-            encoder.load('Encoder-Decoder/Encoder')
-            decoder.load('Encoder-Decoder/Decoder')
-            see_parrot_results(encoder, decoder, 'final', x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
-            # ERROR, see_parrot_results doesn't dump the same acc with the loaded model than the saved model
-            input('ERR')
+            encoder.load(name='Encoder-Decoder/Encoder')
+            decoder.load(name='Encoder-Decoder/Decoder')
+            see_parrot_results(encoder, decoder, 'final', x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)), greedy=True)
         else:
             encoder, decoder = choose_coders(dc, attention, search_size=5)
     else:
@@ -239,13 +237,13 @@ def parrot_initialization(dataset, emb_path, attention):
             # to reduce training time, compute global accuracy only every 30 epochs
             see_parrot_results(encoder, decoder, epoch, x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)), greedy=True)
             # see_parrot_results(encoder, decoder, epoch, x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
-        if decoder.parrot_stopping:
-            break
         encoder.save(name='Encoder-Decoder/Encoder')
         decoder.save(name='Encoder-Decoder/Decoder')
+        if decoder.parrot_stopping:
+            break
         # x_batch, y_parrot_batch, sl_batch = u.shuffle_data(x_batch, y_parrot_batch, sl_batch)
         # strangely, shuffle data between epoch make the training realy noisy
-        
+
     return encoder, decoder
 
 

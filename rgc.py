@@ -4,18 +4,18 @@ import sys
 import logging
 import argparse
 import tensorflow as tf
+from encoder import EncoderRNN
+from decoder import DecoderRNN
 import tensorflow.contrib.eager as tfe
-from pretrainer import parrot_initialization
+from data_container import DataContainer
+from pretrainer import parrot_initialization, see_parrot_results
 
 import default  # to import os environment variables
 
 
 if __name__ == '__main__':
     # # TODO:
-    # => Add save & load of model
-    #   -> currently, encoder save & load works but not Encoder-Decoder
-    #
-    # => Luong attention implemented but the attention vector is not feed as the decoder input
+    # => Luong attention implemented but the attention vector is not feed to the decoder input
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
     argparser.add_argument('--input', metavar='INPUT', default=os.environ['INPUT'], type=str)
     argparser.add_argument('--language', metavar='LANGUAGE', default='en', type=str)
@@ -28,4 +28,6 @@ if __name__ == '__main__':
 
     tfe.enable_eager_execution()
 
-    parrot_initialization(args.input, args.emb, args.attention)
+    rep = input('Launch parrot initialization? (y or n): ')
+    if rep == 'y':
+        parrot_initialization(args.input, args.emb, args.attention)
