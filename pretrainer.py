@@ -244,7 +244,7 @@ def parrot_initialization(dataset, emb_path, attention):
         # x_batch, y_parrot_batch, sl_batch = u.shuffle_data(x_batch, y_parrot_batch, sl_batch)
         # strangely, shuffle data between epoch make the training realy noisy
 
-    return encoder, decoder
+    return encoder, decoder, dc
 
 
 if __name__ == '__main__':
