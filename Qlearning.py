@@ -21,11 +21,12 @@ if __name__ == '__main__':
     num_actions = 6
     gamma = 0.9
     decreasing_step = 0.005
-    R = np.asarray([[-1, 100, -1, -1, -1, 0], [-1, -1, 100, -1, -1, 0], [-1, -1, -1, 100, -1, 0],\
-                    [-1, -1, -1, -1, 100, 0], [0, -1, -1, -1, -1, 100], [-1, -1, -1, -1, -1, 100]])
+    R = np.asarray([[-1, 10, -1, -1, -1, 0], [-1, -1, 10, -1, -1, 0], [-1, -1, -1, 10, -1, 0],\
+                    [-1, -1, -1, -1, 10, 0], [0, -1, -1, -1, -1, 10], [-1, -1, -1, -1, -1, 10]])
     s2idx = {'sos': 0, 'mon': 1, 'nom': 2, 'est': 3, 'Brian': 4, 'eos': 5}
     a2s = {v: k for k, v in s2idx.items()}
     max_try = 100
+    max_steps = 100
 
     num_episodes = []
     for _ in tqdm.tqdm(range(1000)):
@@ -35,12 +36,12 @@ if __name__ == '__main__':
         all_path = []
         num_episode = 0
         finish = False
-        while finish == False:
+        while finish == False and num_episode < max_try:
             s = 'sos'
             episode = []
             path = [s]
-            loop_pos = 0
-            while s != 'eos':
+            step = 0
+            while s != 'eos' and step < max_steps:
                 if np.random.rand() < epsilon:
                     a = np.random.randint(0, num_actions)
                     epsilon -= decreasing_step
@@ -57,14 +58,11 @@ if __name__ == '__main__':
                 episode.append([s, a, reward, s_next])
                 s = s_next
                 path.append(s)
-                loop_pos += 1
-                if loop_pos > max_try:
-                    break
+                step += 1
             num_episode += 1
-            if ['sos', 'mon', 'nom', 'est', 'Brian', 'eos'] in all_path or num_episode > max_try:
+            if ['sos', 'mon', 'nom', 'est', 'Brian', 'eos'] in all_path:
                 finish = True
-            if num_episode < max_try:
-                memory.append(episode)
-                all_path.append(path)
+            memory.append(episode)
+            all_path.append(path)
         num_episodes.append(num_episode)
     print('It works in average of {} episodes'.format(np.mean(num_episodes)))

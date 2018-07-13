@@ -15,6 +15,7 @@ import default  # to import os environment variables
 
 def load_needed(dataset, emb_path, attention):
     dc = DataContainer(dataset, emb_path)
+    dc.prepare_data()
     encoder = EncoderRNN()
     decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens, attention=attention)
     encoder.load(name='Encoder-Decoder/Encoder')
@@ -27,7 +28,7 @@ if __name__ == '__main__':
     # => Luong attention implemented but the attention vector is not feed to the decoder input
     #
     # => add connection between encoder-decoder & bbc for loss computation
-    # => add network to compute reward at each decoding step
+    # => add network to estimate reward at each decoding step
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
     argparser.add_argument('--input', metavar='INPUT', default=os.environ['INPUT'], type=str)
     argparser.add_argument('--language', metavar='LANGUAGE', default='en', type=str)

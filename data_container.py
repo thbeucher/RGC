@@ -1,5 +1,4 @@
-import os
-import sys
+import json
 import logging
 import numpy as np
 import utility as u
@@ -7,10 +6,6 @@ import pickle as pk
 import fasttext as ft
 from unidecode import unidecode
 from sklearn.model_selection import train_test_split
-
-import default
-sys.path.append(os.environ['LIBRARY'])
-from library import DataLoader
 
 
 class DataContainer(object):
@@ -40,7 +35,16 @@ class DataContainer(object):
         self.emb_path = emb_path
         self.batch_size = batch_size
         self.test_size = test_size
-        self.prepare_data()
+        self.get_data_from_json(input_file)
+
+    def get_data_from_json(self, input_file):
+        with open(input_file, 'r') as f:
+            self.dataset = json.load(f)
+        self.sources, self.labels = [], []
+        for intent in self.dataset['intents']:
+            for exp in intent['expressions']:
+                self.sources.append(exp['source'])
+                self.labels.append(intent['name'])
 
     def save_dicts(self, path='data/'):
         with open(path + 'vocab.pk', 'wb') as f:
@@ -73,13 +77,12 @@ class DataContainer(object):
         logging.info('Loads embeddings...')
         self.emb = ft.load_model(self.emb_path)
         logging.info('Embeddings loaded.')
-        self.data = DataLoader(self.input_file)
-        cleaned_sources = [u.clean_sentence(s) + ' eos' for s in self.data.sources]  # add EndOfSentence token
+        cleaned_sources = [u.clean_sentence(s) + ' eos' for s in self.sources]  # add EndOfSentence token
         decoded_lowered_sources = [unidecode(s).lower() for s in cleaned_sources]  # decode and lowerize sentences
         self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
         sources = u.to_emb(decoded_lowered_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
         sources, seq_lengths, max_sl = u.pad_data(sources, pad_with=self.emb['eos'])
-        labels, self.num_class = u.encode_labels(self.data.labels)
+        labels, self.num_class = u.encode_labels(self.labels)
         self.max_tokens = max_sl
 
         # add StartOfSentence token to vocabulary
@@ -95,7 +98,7 @@ class DataContainer(object):
         # _tr = _train | _te = _test
         x_tr, self.x_te, y_tr, self.y_te, sl_tr, self.sl_te, y_p_tr, self.y_p_te, y_p_p_tr,\
         self.y_p_p_te = train_test_split(sources, labels, seq_lengths, self.y_parrot, self.y_parrot_padded,
-                                         test_size=self.test_size, stratify=self.data.labels)
+                                         test_size=self.test_size, stratify=self.labels)
 
         sources, labels, seq_lengths, y_parrot_shuffled, y_p_p_s = u.shuffle_data(x_tr, y_tr, sl_tr, y_p_tr, y_p_p_tr)
         self.y_parrot_batch = u.create_batch(y_parrot_shuffled, batch_size=self.batch_size)

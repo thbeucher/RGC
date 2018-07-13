@@ -17,6 +17,7 @@ import default
 
 def get_data():
     dc = DataContainer(os.environ['INPUT'], os.environ['EMB'])
+    dc.prepare_data()
     x_a = [sample for batch in dc.x_train for sample in batch] + dc.x_te
     sl_a = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
     y_parrot_a = [sample for batch in dc.y_parrot_padded_batch for sample in batch] + dc.y_p_p_te

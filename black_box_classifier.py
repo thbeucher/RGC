@@ -1,5 +1,4 @@
 import os
-import sys
 import regex
 from sklearn.svm import LinearSVC
 from sklearn.metrics import classification_report
@@ -7,20 +6,18 @@ from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 import default
-sys.path.append(os.environ['LIBRARY'])
-from library import DataLoader
 
 
 class BlackBoxClassifier(object):
     def __init__(self, input_file, language='en', test_size=0.2):
         self.test_size = test_size
-        self.data = DataLoader(input_file)
+        self.dc = DataContainer(input_file, '')
         with open(os.environ['STOPWORDS'].format(language), 'r') as f:
             self.stopwords = set(f.read().splitlines())
         self.vectorizer = TfidfVectorizer(max_df=0.5, use_idf=True, smooth_idf=True,
                                           stop_words=self.stopwords, tokenizer=lambda x: x.split(' '))
         self.classifier = LinearSVC(tol=0.5)
-        self.prepare_data(self.data.sources, self.data.labels)
+        self.prepare_data(self.dc.sources, self.dc.labels)
 
     def clean_sentence(self, sentence):
         return regex.sub(r' +', ' ', regex.sub(r'\p{Punct}', '', sentence)).strip()
