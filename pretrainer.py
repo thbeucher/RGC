@@ -204,9 +204,7 @@ def parrot_initialization(dataset, emb_path, attention):
     sl_a = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
     y_parrot_a = [sample for batch in dc.y_parrot_padded_batch for sample in batch] + dc.y_p_p_te
 
-    x_batch = u.create_batch(x_a, batch_size=dc.batch_size)
-    y_parrot_batch = u.create_batch(y_parrot_a, batch_size=dc.batch_size)
-    sl_batch = u.create_batch(sl_a, batch_size=dc.batch_size)
+    x_batch, y_parrot_batch, sl_batch = u.to_batch(x_a, y_parrot_a, sl_a, batch_size=dc.batch_size)
 
     def get_loss(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)

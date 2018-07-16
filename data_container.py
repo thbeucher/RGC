@@ -38,6 +38,15 @@ class DataContainer(object):
         self.get_data_from_json(input_file)
 
     def get_data_from_json(self, input_file):
+        '''
+        Reads json dataset and extract sources & labels
+
+        Inputs:
+            -> input_file, string, path to the json file
+
+        After called the function you can acces to the sources & labels variables
+        through the class instance
+        '''
         with open(input_file, 'r') as f:
             self.dataset = json.load(f)
         self.sources, self.labels = [], []
@@ -70,22 +79,17 @@ class DataContainer(object):
         with open(path + 'w2o.pk', 'rb') as f:
             self.word2onehot = pk.load(f)
 
-    def prepare_data(self):
+    def get_load_save_vocab_data(self):
         '''
-        Loads & prepares training data into batches
-        '''
-        logging.info('Loads embeddings...')
-        self.emb = ft.load_model(self.emb_path)
-        logging.info('Embeddings loaded.')
-        cleaned_sources = [u.clean_sentence(s) + ' eos' for s in self.sources]  # add EndOfSentence token
-        decoded_lowered_sources = [unidecode(s).lower() for s in cleaned_sources]  # decode and lowerize sentences
-        self.sos = np.vstack([self.emb['sos']] * self.batch_size)  # get embedding of SOS token and prepare it to batch size
-        sources = u.to_emb(decoded_lowered_sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
-        sources, seq_lengths, max_sl = u.pad_data(sources, pad_with=self.emb['eos'])
-        labels, self.num_class = u.encode_labels(self.labels)
-        self.max_tokens = max_sl
+        Loads or creates & saved data about vocabulary
 
-        # add StartOfSentence token to vocabulary
+        Available data after calling this function:
+            -> vocabulary, list of string, list of words
+            -> word2idx, dictionary,
+            -> idx2word, dictionary,
+            -> idx2emb, dictionary,
+            -> word2onehot, dictionary,
+        '''
         rep = input('Load dictionaries? (y or n): ')
         if rep == 'y':
             self.load_dicts()
@@ -93,6 +97,52 @@ class DataContainer(object):
             self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = u.get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
             self.word2onehot = u.one_hot_encoding(list(self.word2idx.keys()))
             self.save_dicts()
+
+    def preprocess_sentences(self, sentences):
+        '''
+        Remove double space and punctutation then add EOS token and finally
+        remove accent then lowerize
+
+        Inputs:
+            -> sentences, list of string, list of sentences to preprocess
+
+        Outputs:
+            -> cleaned_source, list of string
+            -> decoded_lowered_sources, list of string
+        '''
+        cleaned_sources = [u.clean_sentence(s) + ' eos' for s in sentences]
+        decoded_lowered_sources = [unidecode(s).lower() for s in cleaned_sources]
+        return cleaned_sources, decoded_lowered_sources
+
+    def source_to_emb(self, sources, pad_with='eos'):
+        '''
+        Converts sources to embedding representation, option to pad with one specific token
+
+        Inputs:
+            -> sources, list of string
+            -> pad_with, optional, string, token to use to pad sources
+
+        Outputs:
+            -> padded_emb_sources, list of numpy array
+            -> seq_lengths, list of int
+            -> max_sl, int, the bigger sequence length
+        '''
+        logging.info('Loads embeddings...')
+        self.emb = ft.load_model(self.emb_path)
+        logging.info('Embeddings loaded.')
+        emb_sources = u.to_emb(sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
+        padded_emb_sources, seq_lengths, max_sl = u.pad_data(emb_sources, pad_with=self.emb[pad_with])
+        return padded_emb_sources, seq_lengths, max_sl
+
+    def prepare_data(self):
+        '''
+        Loads & prepares training data into batches
+        '''
+        _, decoded_lowered_sources = self.preprocess_sentences(self.sources)
+        sources, seq_lengths, self.max_tokens = self.source_to_emb(decoded_lowered_sources)
+        labels, self.num_class = u.encode_labels(self.labels)
+
+        self.get_load_save_vocab_data()
         self.y_parrot, self.y_parrot_padded = self.get_y_parrot(decoded_lowered_sources)
 
         # _tr = _train | _te = _test

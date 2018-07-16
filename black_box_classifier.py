@@ -1,6 +1,7 @@
 import os
 import regex
 from sklearn.svm import LinearSVC
+from data_container import DataContainer
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer

@@ -20,6 +20,21 @@ def create_batch(iterable, batch_size=None, num_batch=None):
         return [iterable[i:i+batch_size] for i in range(0, size, batch_size)]
 
 
+def to_batch(*args, batch_size=1):
+    '''
+    Transforms data into batchs
+
+    Inputs:
+        -> give as many list as you want
+        -> batch_size, int, optional
+
+    Outputs:
+        -> your list transformed into batches
+    '''
+    logging.info('Transform data into batch...')
+    return [create_batch(l, batch_size=batch_size) for l in args]
+
+
 def clean_sentence(sentence):
     '''
     Removes double space and punctuation from given string
@@ -129,21 +144,6 @@ def one_hot_encoding(labels):
         onehot[uniq_labels.index(l)] = 1.
         labels2onehot[l] = onehot
     return labels2onehot
-
-
-def to_batch(*args, batch_size=1):
-    '''
-    Transforms data into batchs
-
-    Inputs:
-        -> give as many list as you want
-        -> batch_size, int, optional
-
-    Outputs:
-        -> your list transformed into batches
-    '''
-    logging.info('Transform data into batch...')
-    return [create_batch(l, batch_size=batch_size) for l in args]
 
 
 def get_vocabulary(sources, emb, unidecode_lower=False):
