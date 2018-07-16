@@ -134,49 +134,78 @@ class DataContainer(object):
         padded_emb_sources, seq_lengths, max_sl = u.pad_data(emb_sources, pad_with=self.emb[pad_with])
         return padded_emb_sources, seq_lengths, max_sl
 
-    def prepare_data(self):
+    def get_y_classif(self, labels):
         '''
-        Loads & prepares training data into batches
+        Returns expected output for classification, one hot encoding of each sample outputs
+
+        Inputs:
+            -> labels, list of string
+
+        Outputs:
+            -> y, numpy array, shape = [num_samples, num_labels]
+            -> num_class, int
         '''
-        _, decoded_lowered_sources = self.preprocess_sentences(self.sources)
-        sources, seq_lengths, self.max_tokens = self.source_to_emb(decoded_lowered_sources)
-        labels, self.num_class = u.encode_labels(self.labels)
+        return u.encode_labels(labels)
 
-        self.get_load_save_vocab_data()
-        self.y_parrot, self.y_parrot_padded = self.get_y_parrot(decoded_lowered_sources)
-
-        # _tr = _train | _te = _test
-        x_tr, self.x_te, y_tr, self.y_te, sl_tr, self.sl_te, y_p_tr, self.y_p_te, y_p_p_tr,\
-        self.y_p_p_te = train_test_split(sources, labels, seq_lengths, self.y_parrot, self.y_parrot_padded,
-                                         test_size=self.test_size, stratify=self.labels)
-
-        sources, labels, seq_lengths, y_parrot_shuffled, y_p_p_s = u.shuffle_data(x_tr, y_tr, sl_tr, y_p_tr, y_p_p_tr)
-        self.y_parrot_batch = u.create_batch(y_parrot_shuffled, batch_size=self.batch_size)
-        self.y_parrot_padded_batch = u.create_batch(y_p_p_s, batch_size=self.batch_size)
-        self.x_train, self.y_train, self.sl_train = u.to_batch(sources, labels, seq_lengths, batch_size=self.batch_size)
-
-    def get_y_parrot(self, sources, pad_with='eos'):
+    def get_y_sources(self, sources, pad_with=None, max_tokens=None):
         '''
-        Gets y for parrot initilization
+        Gets expected output as sequence ie y will reflect the tokens to find for each sources
 
         Inputs:
             -> sources, list of string
-            -> pad_with, string, optional, default to `eos`
+            -> pad_with, string, token to use to pad the sequences
+            -> max_tokens, int, the maximum number of tokens for each sequences
 
         Outputs:
-            -> y_parrot, list of list, sublists are list of one hot vector
-            -> y_parrot_padded, list of list, same as y_parrot but each sublist are filled with
-               supplementary one hot vector (one hot vector of given pad_with value) in order to
-               have each sublist of the same len
+            -> y_parrot, list of list of list, [[one_hot_vector], [...], ...]
+               shape = [num_samples, num_tokens, vocabulary_size]
+            OR
+            -> y_parrot_padded, same as y_parrot but with sequence length fixed
+               shape = [num_samples, max_tokens, vocabulary_size]
         '''
-        y_parrot, y_parrot_padded = [], []
-        for s in sources:
-            tmp = [self.word2onehot[w] for w in s.split(' ')]
-            y_parrot.append(tmp)
+        y_parrot = [[self.word2onehot[w] for w in s.split(' ')] for s in sources]
+        if pad_with is not None:
+            y_parrot_padded = [yp + [self.word2onehot[pad_with]] * (max_tokens - len(yp)) for yp in y_parrot]
+            return y_parrot_padded
+        return y_parrot
 
-            tmp_pad = tmp + [self.word2onehot[pad_with]] * (self.max_tokens - len(tmp))
-            y_parrot_padded.append(tmp_pad)
-        return y_parrot, y_parrot_padded
+    def split_data(self, *args, stratify_ref=None):
+        '''
+        Splits given data into train/test
+
+        Inputs:
+            -> args, give as many list as you want
+            -> stratify_ref, list, labels to use in order to homogenously split the data
+
+        Outputs:
+            -> a list of train/test data, len(list) = 2*len(args)
+        '''
+        stratify = self.labels if stratify_ref is None else stratify_ref
+        return train_test_split(*args, test_size=self.test_size, stratify=stratify)
+
+    def prepare_data(self):
+        '''
+        Loads & prepares all data
+        '''
+        _, decoded_lowered_sources = self.preprocess_sentences(self.sources)
+        sources, seq_lengths, self.max_tokens = self.source_to_emb(decoded_lowered_sources)
+        y_classif, self.num_class = self.get_y_classif(self.labels)
+
+        self.get_load_save_vocab_data()
+        y_parrot = self.get_y_sources(decoded_lowered_sources)
+        y_parrot_padded = self.get_y_sources(decoded_lowered_sources, pad_with='eos', max_tokens=self.max_tokens)
+
+        # shuffle all data
+        self.x, self.y_classif, self.sl, self.y_parrot, self.y_parrot_padded = u.shuffle_data(sources, y_classif, seq_lengths,
+                                                                                              y_parrot, y_parrot_padded)
+        # split into train test
+        # _tr = _train | _te = _test
+        self.x_tr, self.x_te, self.y_tr_classif, self.y_te_classif, self.sl_tr, self.sl_te,\
+        self.y_p_p_tr, self.y_p_p_te = self.split_data(self.x, self.y_classif, self.sl, self.y_parrot_padded)
+
+        # arrange training data into batchs
+        self.x_train, self.y_train_classif, self.sl_train, self.y_parrot_padded_train = u.to_batch(self.x_tr, self.y_tr_classif,
+                                                                                                   self.sl_tr, self.y_p_p_tr)
 
     def get_sos_batch_size(self, batch_size):
         return np.vstack([self.emb['sos']] * batch_size)

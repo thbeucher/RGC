@@ -13,10 +13,7 @@ class BlackBoxClassifier(object):
     def __init__(self, input_file, language='en', test_size=0.2):
         self.test_size = test_size
         self.dc = DataContainer(input_file, '')
-        with open(os.environ['STOPWORDS'].format(language), 'r') as f:
-            self.stopwords = set(f.read().splitlines())
-        self.vectorizer = TfidfVectorizer(max_df=0.5, use_idf=True, smooth_idf=True,
-                                          stop_words=self.stopwords, tokenizer=lambda x: x.split(' '))
+        self.vectorizer = TfidfVectorizer(max_df=0.5, use_idf=True, smooth_idf=True, tokenizer=lambda x: x.split(' '))
         self.classifier = LinearSVC(tol=0.5)
         self.prepare_data(self.dc.sources, self.dc.labels)
 
@@ -44,7 +41,12 @@ class BlackBoxClassifier(object):
 
 
 if __name__ == '__main__':
-    b = BlackBoxClassifier(os.environ['INPUT'])
+    import argparse
+    argparser = argparse.ArgumentParser(prog='rgc.py', description='')
+    argparser.add_argument('--input', metavar='INPUT', default=os.environ['INPUT'], type=str)
+    args = argparser.parse_args()
+
+    b = BlackBoxClassifier(args.input)
     b.train(b.x_train, b.y_train)
     b.predict_test(b.x_test, b.y_test)
     print(b.get_reward(b.x_test, b.y_test))

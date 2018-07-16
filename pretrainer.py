@@ -125,7 +125,7 @@ def pretrain_coder(coder, coder_cell, dc, idx=None, queue=None):
         -> dc, DataContainer instance
     '''
     trainer = PreTrainer(dc.num_class, coder_cell)
-    acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train, dc.y_te])
+    acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train_classif, dc.y_te_classif])
     if idx is not None and queue:
         coder.save(name='{}-{}'.format(coder.name, idx))
         queue.put([acc, idx])
@@ -200,11 +200,8 @@ def parrot_initialization(dataset, emb_path, attention):
     '''
     dc = DataContainer(dataset, emb_path)
     dc.prepare_data()
-    x_a = [sample for batch in dc.x_train for sample in batch] + dc.x_te
-    sl_a = [sample for batch in dc.sl_train for sample in batch] + dc.sl_te
-    y_parrot_a = [sample for batch in dc.y_parrot_padded_batch for sample in batch] + dc.y_p_p_te
 
-    x_batch, y_parrot_batch, sl_batch = u.to_batch(x_a, y_parrot_a, sl_a, batch_size=dc.batch_size)
+    x_batch, y_parrot_batch, sl_batch = u.to_batch(dc.x, dc.y_parrot_padded, dc.sl, batch_size=dc.batch_size)
 
     def get_loss(encoder, decoder, epoch, x, y, sl, sos):
         output, cell_state = encoder.forward(x, sl)
@@ -218,7 +215,8 @@ def parrot_initialization(dataset, emb_path, attention):
             decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens, attention=attention)
             encoder.load(name='Encoder-Decoder/Encoder')
             decoder.load(name='Encoder-Decoder/Decoder')
-            see_parrot_results(encoder, decoder, 'final', x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)), greedy=True)
+            sos = dc.get_sos_batch_size(len(dc.x))
+            see_parrot_results(encoder, decoder, 'final', dc.x, dc.y_parrot_padded, dc.sl, sos, greedy=True)
         else:
             encoder, decoder = choose_coders(dc, attention, search_size=5)
     else:
@@ -234,8 +232,9 @@ def parrot_initialization(dataset, emb_path, attention):
             optimizer.minimize(lambda: get_loss(encoder, decoder, epoch, x, y, sl, sos))
         if epoch % 30 == 0:
             # to reduce training time, compute global accuracy only every 30 epochs
-            see_parrot_results(encoder, decoder, epoch, x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)), greedy=True)
-            # see_parrot_results(encoder, decoder, epoch, x_a, y_parrot_a, sl_a, dc.get_sos_batch_size(len(x_a)))
+            sos = dc.get_sos_batch_size(len(dc.x))
+            see_parrot_results(encoder, decoder, epoch, dc.x, dc.y_parrot_padded, dc.sl, sos, greedy=True)
+            # see_parrot_results(encoder, decoder, epoch, dc.x, dc.y_parrot_padded, dc.sl, sos)
         encoder.save(name='Encoder-Decoder/Encoder')
         decoder.save(name='Encoder-Decoder/Decoder')
         if decoder.parrot_stopping:
@@ -263,4 +262,4 @@ if __name__ == '__main__':
     encoder = EncoderRNN()
     trainer = PreTrainer(dc.num_class, encoder.encoder_cell)
 
-    acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train, dc.y_te])
+    acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train_classif, dc.y_te])
