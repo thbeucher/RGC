@@ -16,20 +16,6 @@ class DataContainer(object):
             -> emb_path, string
             -> batch_size, int, optional, default value to 32
             -> test_size, float between 0 and 1, optional, proportion of the dataset to include to test split
-
-        Avaialble data:
-            -> x_batch, list of list of size batch_size
-            -> y_batch, list of list of size batch_size
-            -> seq_length_batch, list of list of size batch_size
-            -> num_class, int, number of classes
-            -> x_test, list of test source data
-            -> y_test, numpy array, shape = [num_sample, num_class]
-            -> sl_test, list of test sequence lengths data
-            -> idx2emb, dictionary linking index to word embedding representation
-            -> word2idx, dictionary linking word to index
-            -> idx2word, dictionary linking index to word
-            -> SOS, numpy array, shape = [batch_size, emb_dim], the Start Of Sentence token
-            -> emb, fasttext model
         '''
         self.input_file = input_file
         self.emb_path = emb_path
@@ -209,6 +195,3 @@ class DataContainer(object):
 
     def get_sos_batch_size(self, batch_size):
         return np.vstack([self.emb['sos']] * batch_size)
-
-    def shuffle_training(self):
-        self.x_train, self.y_train, self.sl_train = u.shuffle_data(self.x_train, self.y_train, self.sl_train)

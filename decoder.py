@@ -188,44 +188,17 @@ class DecoderRNN(object):
         logging.info('Beam search decoding time took = {}s'.format(round(time() - t, 3)))
         return tf.convert_to_tensor(words_predicted)
 
-    def get_sequence(self, full_sentence, pad=False):
+    def get_sequence(self, full_sentence):
         '''
         Slices samples in order to stop at EOS token
 
         Inputs:
             -> full_sentence, tensor, shape = [batch_size, max_tokens]
-            -> pad, boolean, optional, whether or not to return a list of tensor
-               of shape sequence_length or to return a tensor of shape [batch_size, max_tokens]
-               where tokens after EOS token are padded to len(w2i) + 1
 
         Outputs:
-            -> final_full_sentence:
-                -> list of tensor, each tensor of shape = [sequence_length]
-                or
-                -> tensor, shape = [batch_size, max_tokens]
+            -> list of list, len(sublist) = sequence_length
         '''
-        full_sentence = full_sentence.numpy()
-        eos_idx = {}
-        for i in np.argwhere(full_sentence == self.w2i['eos']):
-            if i[0] not in eos_idx:
-                eos_idx[i[0]] = i[1]
-        idxs_last_output = [eos_idx[i] if i in eos_idx else self.max_tokens - 1 for i in range(full_sentence.shape[0])]
-        if pad:
-            for s, i in zip(full_sentence, idxs_last_output):
-                s[i+1:] = len(self.w2i) + 1
-            final_full_sentence = tf.convert_to_tensor(full_sentence, dtype=tf.float32)
-        else:
-            final_full_sentence = [s[:i+1] for s, i in zip(full_sentence, idxs_last_output)]  # i+1 to include the EOS token
-        return final_full_sentence
-
-    def max_slice(self, logits, y):
-        '''
-        '''
-        sliced_logits = []
-        for i, s in enumerate(y):
-            sliced_logits.append(logits[i,:len(s)+1,:])
-        # return tf.convert_to_tensor(sliced_logits)
-        return sliced_logits
+        return [s[:s.index(self.w2i['eos'])+1] for s in full_sentence.numpy().tolist()]
 
     def cost(self, output, target, sl):
         '''
