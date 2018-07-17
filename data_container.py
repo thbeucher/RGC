@@ -77,7 +77,7 @@ class DataContainer(object):
             -> word2onehot, dictionary,
         '''
         rep = input('Load dictionaries? (y or n): ')
-        if rep == 'y':
+        if rep == 'y' or rep == '':
             self.load_dicts()
         else:
             self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = u.get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
@@ -191,7 +191,8 @@ class DataContainer(object):
 
         # arrange training data into batchs
         self.x_train, self.y_train_classif, self.sl_train, self.y_parrot_padded_train = u.to_batch(self.x_tr, self.y_tr_classif,
-                                                                                                   self.sl_tr, self.y_p_p_tr)
+                                                                                                   self.sl_tr, self.y_p_p_tr,
+                                                                                                   batch_size=self.batch_size)
 
     def get_sos_batch_size(self, batch_size):
         return np.vstack([self.emb['sos']] * batch_size)
