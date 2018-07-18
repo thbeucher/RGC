@@ -4,6 +4,7 @@ import numpy as np
 import utility as u
 import multiprocessing
 import tensorflow as tf
+from dddqn import DDDQN
 from collections import deque
 from encoder import EncoderRNN
 from decoder import DecoderRNN
@@ -194,7 +195,7 @@ def see_parrot_results(encoder, decoder, epoch, x, y, sl, sos, greedy=False):
         f.write('\n\n\n\n')
 
 
-def parrot_initialization(dataset, emb_path, attention):
+def parrot_initialization_encoder_decoder(dataset, emb_path, attention):
     '''
     Trains the encoder-decoder to reproduce the input
     '''
@@ -210,7 +211,7 @@ def parrot_initialization(dataset, emb_path, attention):
 
     if os.path.isdir('models/Encoder-Decoder'):
         rep = input('Load previously trained Encoder-Decoder? (y or n): ')
-        if rep == 'y':
+        if rep == 'y' or rep == '':
             encoder = EncoderRNN()
             decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens, attention=attention)
             encoder.load(name='Encoder-Decoder/Encoder')
@@ -243,6 +244,18 @@ def parrot_initialization(dataset, emb_path, attention):
         # strangely, shuffle data between epoch make the training realy noisy
 
     return encoder, decoder, dc
+
+
+def parrot_initialization_rgc(dataset, emb_path):
+    '''
+    Trains the dddqn to repeat the input
+    '''
+    dc = DataContainer(dataset, emb_path)
+    dc.prepare_data()
+    x_batch, y_parrot_batch, sl_batch = u.to_batch(dc.x, dc.y_parrot_padded, dc.sl, batch_size=dc.batch_size)
+
+    encoder = EncoderRNN(num_units=256)
+    dddqn = DDDQN(dc.word2idx, dc.idx2word, dc.idx2emb)
 
 
 if __name__ == '__main__':

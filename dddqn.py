@@ -38,20 +38,20 @@ class DDDQN(object):
             old_kernel.assign(new_kernel)
             old_bias.assign(new_bias)
 
-    def forward(self, input_token, state):
+    def forward(self, input_token, lstm_state):
         '''
 
         Inputs:
             -> input_token, numpy array, shape = [batch_size, emb_dim]
-            -> state, tuple of tensor, (cell_state, hidden_state)
+            -> lstm_state, tuple of tensor, (cell_state, hidden_state)
 
         Outputs:
             -> Qvalue, tensor, shape = [batch_size]
             -> action, tensor, shape = [batch_size]
-            -> state, tuple of tensor
+            -> lstm_state, tuple of tensor
         '''
         input_token = tf.convert_to_tensor(input_token, dtype=tf.float32)
-        output, state = self.lstm(input_token, state)
+        output, lstm_state = self.lstm(input_token, lstm_state)
         vfc = self.value_fc(output)
         v = self.value(vfc)
         afc = self.advantage_fc(output)
@@ -60,7 +60,7 @@ class DDDQN(object):
         Q = v + tf.subtract(a, tf.reduce_mean(a, axis=1, keepdims=True))
         Qvalue = tf.reduce_max(Q, axis=1)
         action = tf.argmax(Q, axis=1)
-        return Qvalue, action, state
+        return Qvalue, action, lstm_state
 
 
 if __name__ == '__main__':

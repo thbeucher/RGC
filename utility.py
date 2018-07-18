@@ -3,6 +3,7 @@ import regex
 import random
 import logging
 import numpy as np
+import tensorflow as tf
 from unidecode import unidecode
 
 
@@ -170,3 +171,42 @@ def get_vocabulary(sources, emb, unidecode_lower=False):
     idx_to_word = {v: k for k, v in word_to_idx.items()}
     idx_to_emb = {v: emb[k] for k, v in word_to_idx.items()}
     return vocabulary, word_to_idx, idx_to_word, idx_to_emb
+
+
+def cross_entropy_cost(output, target, sequence_lengths=None):
+    '''
+    Computes the cross entropy loss with respect to the given sequence lengths.
+
+    Cross entropy indicates the distance between what the model believes the output distribution should be,
+    and what the original distribution really is.
+
+    Suppose you have a fixed model which predict for n class their hypothetical occurence
+    probabilities y1, y2, ..., yn. Suppose that you now observe (in reality) k1 instance of
+    class1, k2 instance of class2, ..., kn instance of classn. According to your model,
+    the log likelihood of this happening is P(data|model) = y1^k1.y2^k2...yn^kn
+    Take the log and changind the sign: -log(P(data|model)) = -sum( ki.log(yi) )i (ie sum on i)
+    If you now divide the righ-hand sum by the number of observations N = k1 + k2 + ... + kn
+    and denote the empirical probabilities as ÿi = ki/N, you'll get the cross-entropy:
+    -(1/N)log(P(data|model)) = -(1/N)sum( ki.log(yi) )i = - sum( ÿi.log(y) )i
+
+    Inputs:
+        -> output, tensor, the word logits, shape = [batch_size, num_tokens, vocab_size]
+        -> target, tensor or numpy array or list, same shape as output
+        -> sequence_length, list of the sequence lengths
+
+    Outputs:
+        -> float, the cross entropy loss
+    '''
+    # if we do not clip the value, it produces NAN
+    cross_entropy = target * tf.log(tf.clip_by_value(output, 1e-10, 1.0))
+    cross_entropy = -tf.reduce_sum(cross_entropy, 2)
+
+    if sequence_lengths is not None:
+        mask = tf.cast(tf.sequence_mask(sequence_lengths, output.shape[1]), dtype=tf.float32)
+        # mask = tf.sign(tf.reduce_max(tf.abs(target), 2))
+        cross_entropy *= mask
+
+    # Average over actual sequence lengths.
+    cross_entropy = tf.reduce_sum(cross_entropy, 1)
+    cross_entropy /= tf.reduce_sum(mask, 1)
+    return tf.reduce_mean(cross_entropy)

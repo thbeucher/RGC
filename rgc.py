@@ -8,7 +8,7 @@ from encoder import EncoderRNN
 from decoder import DecoderRNN
 import tensorflow.contrib.eager as tfe
 from data_container import DataContainer
-from pretrainer import parrot_initialization, see_parrot_results
+from pretrainer import parrot_initialization_encoder_decoder, see_parrot_results
 
 import default  # to import os environment variables
 
@@ -42,9 +42,9 @@ if __name__ == '__main__':
     tfe.enable_eager_execution()
 
     rep = input('Launch parrot initialization? (y or n): ')
-    if rep == 'y':
+    if rep == 'y' or rep == '':
         logging.info('Launch of parrot initilization...')
-        encoder, decoder, dc = parrot_initialization(args.input, args.emb, args.attention)
+        encoder, decoder, dc = parrot_initialization_encoder_decoder(args.input, args.emb, args.attention)
     else:
         logging.info('Load previously pretrained encoder-decoder...')
         encoder, decoder, dc = load_needed(args.input, args.emb, args.attention)

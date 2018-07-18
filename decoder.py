@@ -2,6 +2,7 @@ import os
 import heapq
 import logging
 import numpy as np
+import utility as u
 from time import time
 import tensorflow as tf
 from attention import AttentionS2S
@@ -200,42 +201,6 @@ class DecoderRNN(object):
         '''
         return [s[:s.index(self.w2i['eos'])+1] for s in full_sentence.numpy().tolist()]
 
-    def cost(self, output, target, sl):
-        '''
-        Computes the cross entropy loss with respect to the given sequence lengths.
-
-        Cross entropy indicates the distance between what the model believes the output distribution should be,
-        and what the original distribution really is.
-
-        Suppose you have a fixed model which predict for n class their hypothetical occurence
-        probabilities y1, y2, ..., yn. Suppose that you now observe (in reality) k1 instance of
-        class1, k2 instance of class2, ..., kn instance of classn. According to your model,
-        the log likelihood of this happening is P(data|model) = y1^k1.y2^k2...yn^kn
-        Take the log and changind the sign: -log(P(data|model)) = -sum( ki.log(yi) )i (ie sum on i)
-        If you now divide the righ-hand sum by the number of observations N = k1 + k2 + ... + kn
-        and denote the empirical probabilities as ÿi = ki/N, you'll get the cross-entropy:
-        -(1/N)log(P(data|model)) = -(1/N)sum( ki.log(yi) )i = - sum( ÿi.log(y) )i
-
-        Inputs:
-            -> output, tensor, the word logits, shape = [batch_size, num_tokens, emb_dim]
-            -> target, tensor or numpy array, same shape as output
-            -> sl, list of last sequence indice for each sample
-
-        Outputs:
-            -> float, the cross entropy loss
-        '''
-        # Compute cross entropy for each frame.
-        # if we do not clip the value, it produces NAN
-        cross_entropy = target * tf.log(tf.clip_by_value(output, 1e-10, 1.0))
-        cross_entropy = -tf.reduce_sum(cross_entropy, 2)
-        mask = tf.cast(tf.sequence_mask(sl, output.shape[1]), dtype=tf.float32)
-        # mask = tf.sign(tf.reduce_max(tf.abs(target), 2))
-        cross_entropy *= mask
-        # Average over actual sequence lengths.
-        cross_entropy = tf.reduce_sum(cross_entropy, 1)
-        cross_entropy /= tf.reduce_sum(mask, 1)
-        return tf.reduce_mean(cross_entropy)
-
     def get_loss(self, epoch, sos, state, y, sl, x, encoder_outputs, verbose=True):
         '''
         Computes loss from given batch
@@ -252,7 +217,7 @@ class DecoderRNN(object):
 
         # +1 to sl because sl is a list of last sequence indices ie len(sequence) - 1
         sl = (np.asarray(sl) + 1).tolist()
-        loss = self.cost(wl, y, sl)
+        loss = u.cross_entropy_cost(wl, y, sequence_lengths=sl)
 
         if verbose and epoch != self.epoch:
             predict = tf.cast(tf.argmax(wl, -1), dtype=tf.float32).numpy()
