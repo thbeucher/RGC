@@ -10,6 +10,7 @@ class DDDQN(object):
                 -> update targetDQN, with mainDQN weights, every T steps
     '''
     def __init__(self, word2idx, idx2word, idx2emb, lstm_size=256, dense_value=512, dense_advantage=512, max_tokens=128):
+        self.name = 'DDDQN'
         self.w2i = word2idx
         self.i2w = idx2word
         self.i2e = idx2emb

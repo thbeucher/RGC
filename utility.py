@@ -210,3 +210,29 @@ def cross_entropy_cost(output, target, sequence_lengths=None):
     cross_entropy = tf.reduce_sum(cross_entropy, 1)
     cross_entropy /= tf.reduce_sum(mask, 1)
     return tf.reduce_mean(cross_entropy)
+
+
+def init_rnn_layer(layer_to_init):
+    '''
+    Initialize an rnn layer
+
+    Inputs:
+        -> layer_to_init, tensorflow rnn layer
+    '''
+    hidden = tf.convert_to_tensor(np.zeros((32, 300), dtype=np.float32))
+    state = layer_to_init.zero_state(32, dtype=tf.float32)
+    layer_to_init(hidden, state)
+
+
+def update_layer(layer_to_update, new_values):
+    '''
+    Updates the given layer trainables with the given values
+
+    Inputs:
+        -> layer_to_update, tensorflow layer
+        -> new_values, tensorflow layer
+    '''
+    old_kernel, old_bias = layer_to_update.variables
+    new_kernel, new_bias = new_values.variables
+    old_kernel.assign(new_kernel)
+    old_bias.assign(new_bias)

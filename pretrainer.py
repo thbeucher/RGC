@@ -11,7 +11,7 @@ from decoder import DecoderRNN
 from data_container import DataContainer
 
 
-class PreTrainer(object):
+class RNNPreTrainer(object):
     def __init__(self, num_class, layer_to_train, history_size=5):
         self.num_class = num_class
         self.layer_to_train = layer_to_train
@@ -117,24 +117,70 @@ class PreTrainer(object):
         return accuracy
 
 
-def pretrain_coder(coder, coder_cell, dc, idx=None, queue=None):
+def pretrain_rnn_layer(class_rnn, layer_to_train, dc, idx, queue, multiprocessed=True):
     '''
-    Trains the encoder as a classifier
+    Trains the given rnn layer using classification task
 
     Inputs:
-        -> encoder, Encoder instance
+        -> class_rnn, class object, should contain a name attribute and a save function
+        -> layer_to_train, the tensorflow layer to pretrain
         -> dc, DataContainer instance
+        -> idx, int, index
+        -> queue, multiprocessing Queue object
     '''
-    trainer = PreTrainer(dc.num_class, coder_cell)
+    trainer = RNNPreTrainer(dc.num_class, layer_to_train)
     acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train_classif, dc.y_te_classif])
-    if idx is not None and queue:
-        coder.save(name='{}-{}'.format(coder.name, idx))
+    class_rnn.save(name='{}-{}'.format(class_rnn.name, idx))
+    if multiprocessed:
         queue.put([acc, idx])
+    else:
+        return [acc, idx]
 
+
+def launch_training(class_rnn, layer_to_train, dc, search_size):
+    procs = []
+    queue = multiprocessing.Queue()
+
+    for i in range(search_size):
+        p = multiprocessing.Process(target=pretrain_rnn_layer, args=(class_rnn, layer_to_train, dc, i, queue))
+        procs.append(p)
+        p.start()
+
+    for process in procs:
+        process.join()
+
+    results = []
+    for i in range(len(procs)):
+        results.append(queue.get())
+
+    queue.close()
+    return results
+
+
+def choose_best_rnn_pretrained(class_rnn, layer_to_train, dc, search_size=8, log=False, multiprocessed=False):
+    '''
+    Trains a pool of classifier and retrieve the best one to initialize the weights of the rnn layer
+    '''
+    logging.info('Choosing best rnn layer pretrained...')
+    if not log:
+        logger = logging.getLogger()
+        logger.disabled = True
+
+    if multiprocessed:
+        results = launch_training(class_rnn, layer_to_train, dc, search_size)
+    else:
+        results = [pretrain_rnn_layer(class_rnn, layer_to_train, dc, i, None, multiprocessed=False) for i in range(search_size)]
+
+    if not log:
+        logger.disabled = False
+
+    results.sort(key=lambda x: x[0], reverse=True)
+    logging.info('Accuracy of the best classifier = {}'.format(results[0][0]))
+    class_rnn.load(name='{}-{}'.format(class_rnn.name, results[0][1]), only_lstm=True)
 
 def choose_coders(dc, attention, search_size=8):
     '''
-    Trains search_size encoder and return the best one
+    Trains search_size coders and return the best one
     '''
     encoder = EncoderRNN()
     decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens, attention=attention)
@@ -143,25 +189,8 @@ def choose_coders(dc, attention, search_size=8):
     logger = logging.getLogger()
     logger.disabled = True
 
-    def launch(coder, coder_cell, dc, search_size):
-        procs = []
-        queue = multiprocessing.Queue()
-
-        for i in range(search_size):
-            p = multiprocessing.Process(target=pretrain_coder, args=(coder, coder_cell, dc, i, queue))
-            procs.append(p)
-            p.start()
-
-        results = []
-        for i in range(len(procs)):
-            results.append(queue.get())
-
-        for process in procs:
-            process.join()
-        return results
-
-    results_encoder = launch(encoder, encoder.encoder_cell, dc, search_size)
-    results_decoder = launch(decoder, decoder.decoder_cell, dc, search_size)
+    results_encoder = launch_training(encoder, encoder.encoder_cell, dc, search_size)
+    results_decoder = launch_training(decoder, decoder.decoder_cell, dc, search_size)
 
     logger.disabled = False
 
@@ -248,7 +277,7 @@ def parrot_initialization_encoder_decoder(dataset, emb_path, attention):
 
 def parrot_initialization_rgc(dataset, emb_path):
     '''
-    Trains the dddqn to repeat the input
+    Trains the rgc to repeat the input
     '''
     dc = DataContainer(dataset, emb_path)
     dc.prepare_data()
@@ -262,7 +291,6 @@ if __name__ == '__main__':
     import os
     import sys
     import default
-    from encoder import EncoderRNN
     import tensorflow.contrib.eager as tfe
     from data_container import DataContainer
 
@@ -272,7 +300,16 @@ if __name__ == '__main__':
 
     dc = DataContainer(os.environ['INPUT'], os.environ['EMB'])
     dc.prepare_data()
-    encoder = EncoderRNN()
-    trainer = PreTrainer(dc.num_class, encoder.encoder_cell)
 
-    acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train_classif, dc.y_te])
+    encoder = EncoderRNN()
+    choose_best_rnn_pretrained(encoder, encoder.encoder_cell, dc, search_size=1)
+    print(encoder.encoder_cell.variables)
+    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
+    u.init_rnn_layer(decoder.decoder_cell)
+    print(decoder.decoder_cell.variables)
+    u.update_layer(decoder.decoder_cell, encoder.encoder_cell)
+    print(decoder.decoder_cell.variables)
+
+    # encoder = EncoderRNN()
+    # trainer = RNNPreTrainer(dc.num_class, encoder.encoder_cell)
+    # acc = trainer.classification_train([dc.x_train, dc.x_te], [dc.y_train_classif, dc.y_te])

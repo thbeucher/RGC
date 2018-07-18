@@ -23,7 +23,7 @@ class EncoderRNN(object):
         saver = tfe.Saver(self.encoder_cell.variables)
         saver.save(save_path)
 
-    def load(self, name=None):
+    def load(self, name=None, only_lstm=None):
         self.forward(np.zeros((32, 16, 300), dtype=np.float32), list(range(2, 34, 1)))
         saver = tfe.Saver(self.encoder_cell.variables)
         name = name if name else self.name
