@@ -1,4 +1,6 @@
+import os
 import tensorflow as tf
+import tensorflow.contrib.eager as tfe
 
 
 class DDDQN(object):
@@ -31,7 +33,7 @@ class DDDQN(object):
         save_path = 'models/' + name + '/'
         if not os.path.isdir(save_path):
             os.makedirs(save_path)
-        saver = tfe.Saver([t for var in self.to_update for t in var])
+        saver = tfe.Saver([t for var in self.to_update for t in var.variables])
         saver.save(save_path)
 
     def load(self, name=None, only_lstm=False):
@@ -41,7 +43,7 @@ class DDDQN(object):
         if only_lstm:
             saver = tfe.Saver(self.lstm.variables)
         else:
-            saver = tfe.Saver([t for var in self.to_update for t in var])
+            saver = tfe.Saver([t for var in self.to_update for t in var.variables])
         name = name if name else self.name
         save_path = 'models/' + name + '/'
         saver.restore(save_path)

@@ -303,6 +303,12 @@ def get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=False, x
     return predicted_words, logits
 
 
+def full_encoder_dddqn_pass(x, sl, encoder, dddqn, sos, max_steps, training=False):
+    output, cell_state = encoder.forward(x, sl)
+    lstm_state = (cell_state, output)
+    preds, logits = get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=training, x=x)
+    return preds, logits
+
 
 def parrot_initialization_rgc(dataset, emb_path):
     '''
@@ -321,9 +327,7 @@ def parrot_initialization_rgc(dataset, emb_path):
 
     # train the network to repeat the sentence
     def get_loss(encoder, dddqn, epoch, x, y, sl, sos, max_steps, verbose=True):
-        output, cell_state = encoder.forward(x, sl)
-        lstm_state = (cell_state, output)
-        preds, logits = get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=True, x=x)
+        preds, logits = full_encoder_dddqn_pass(x, sl, encoder, dddqn, sos, max_steps, training=True)
         sl = [end_idx + 1 for end_idx in sl]  # sl = [len(sequence)-1, ...] => +1 to get the len
         loss = u.cross_entropy_cost(logits, y, sequence_lengths=sl)
         if verbose:
@@ -336,7 +340,15 @@ def parrot_initialization_rgc(dataset, emb_path):
         for x, y, sl in zip(x_batch, y_parrot_batch, sl_batch):
             sos = dc.get_sos_batch_size(len(x))
             optimizer.minimize(lambda: get_loss(encoder, dddqn, epoch, x, y, sl, sos, dc.max_tokens))
-            input()  # TODO
+        encoder.save(name='RGC/Encoder')
+        dddqn.save(name='RGC/DDDQN')
+        # sos = dc.get_sos_batch_size(len(dc.x))
+        # preds, logits = full_encoder_dddqn_pass(dc.x, dc.sl, encoder, dddqn, sos, dc.max_tokens)
+        # _, acc = u.get_acc_word_seq(logits, dc.y_parrot_padded, dc.sl)
+        # logging.info('Validation accuracy = {}'.format(acc))
+        # if acc == 1:
+        #     break
+
 
 if __name__ == '__main__':
     import os
