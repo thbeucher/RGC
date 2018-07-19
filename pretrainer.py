@@ -328,6 +328,7 @@ def parrot_initialization_rgc(dataset, emb_path):
     # train the network to repeat the sentence
     def get_loss(encoder, dddqn, epoch, x, y, sl, sos, max_steps, verbose=True):
         preds, logits = full_encoder_dddqn_pass(x, sl, encoder, dddqn, sos, max_steps, training=True)
+        logits = tf.nn.softmax(logits)
         sl = [end_idx + 1 for end_idx in sl]  # sl = [len(sequence)-1, ...] => +1 to get the len
         loss = u.cross_entropy_cost(logits, y, sequence_lengths=sl)
         if verbose:
@@ -337,9 +338,11 @@ def parrot_initialization_rgc(dataset, emb_path):
 
     optimizer = tf.train.AdamOptimizer()
     for epoch in range(300):
+        verbose = True
         for x, y, sl in zip(x_batch, y_parrot_batch, sl_batch):
             sos = dc.get_sos_batch_size(len(x))
-            optimizer.minimize(lambda: get_loss(encoder, dddqn, epoch, x, y, sl, sos, dc.max_tokens))
+            optimizer.minimize(lambda: get_loss(encoder, dddqn, epoch, x, y, sl, sos, dc.max_tokens, verbose=verbose))
+            verbose = False
         encoder.save(name='RGC/Encoder')
         dddqn.save(name='RGC/DDDQN')
         # sos = dc.get_sos_batch_size(len(dc.x))
