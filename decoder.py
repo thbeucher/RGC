@@ -220,19 +220,7 @@ class DecoderRNN(object):
         loss = u.cross_entropy_cost(wl, y, sequence_lengths=sl)
 
         if verbose and epoch != self.epoch:
-            predict = tf.cast(tf.argmax(wl, -1), dtype=tf.float32).numpy()
-            target = np.argmax(y, -1)
-
-            gp_word = 0
-            gp_sentence = 0
-            for p, t, size in zip(predict, target, sl):
-                if np.array_equal(p[:size], t[:size]):
-                    gp_sentence += 1
-                gp_word += sum(np.equal(p[:size], t[:size]))
-
-            acc_words = round(gp_word / sum(sl), 3)
-            acc_sentences = round(gp_sentence / len(sl), 3)
-
+            acc_words, acc_sentences = u.get_acc_word_seq(wl, y, sl)
             logging.info('Epoch {} -> loss = {} | acc_words = {} | acc_sentences = {}'.format(epoch, loss, acc_words, acc_sentences))
             self.epoch += 1
 

@@ -58,10 +58,8 @@ class RNNPreTrainer(object):
         loss = tf.reduce_mean(loss)
 
         if verbose and epoch != self.epoch:
-            predict = tf.argmax(logits, 1).numpy()
-            target = np.argmax(y, 1)
-            accuracy = np.sum(predict == target) / len(target)
-            logging.info('Epoch {} -> loss = {} | acc = {}'.format(epoch, loss, round(accuracy, 3)))
+            accuracy = u.get_accuracy(logits, y)
+            logging.info('Epoch {} -> loss = {} | acc = {}'.format(epoch, loss, accuracy))
             self.epoch += 1
 
         return loss
@@ -275,6 +273,37 @@ def parrot_initialization_encoder_decoder(dataset, emb_path, attention):
     return encoder, decoder, dc
 
 
+def get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=False, x=None):
+    '''
+    Retrieves predicted words from dddqn
+
+    Inputs:
+        -> dddqn, DDDQN instance
+        -> sos, numpy array, batch of StartOfSequence token, shape = [batch_size, emb_dim]
+        -> lstm_state, tuple of tensor (cell_state, hidden_state)
+        -> max_steps, int, max number of tokens to produce
+        -> training, boolean, optional, inference or training mode
+        -> x, numpy array, optional, shape = [batch_size, num_tokens, emb_dim], must be given if training mode
+
+    Outputs:
+        -> predicted_words, tensor, shape = [batch_size, max_tokens, vocab_size]
+    '''
+    a = tf.convert_to_tensor(sos, dtype=tf.float32)
+    x = np.asarray(x)
+    predicted_words, logits = [], []
+    for mt in range(max_steps):
+        q, a, lstm_state, logit = dddqn.forward(a, lstm_state)
+        if training:
+            a = x[:,mt,:]
+        predicted_words.append(a)
+        logits.append(logit)
+    # [num_steps, batch_size, vocab_size] to [batch_size, num_steps, vocab_size]
+    predicted_words = tf.stack(predicted_words, axis=1)
+    logits = tf.stack(logits, axis=1)
+    return predicted_words, logits
+
+
+
 def parrot_initialization_rgc(dataset, emb_path):
     '''
     Trains the rgc to repeat the input
@@ -283,9 +312,31 @@ def parrot_initialization_rgc(dataset, emb_path):
     dc.prepare_data()
     x_batch, y_parrot_batch, sl_batch = u.to_batch(dc.x, dc.y_parrot_padded, dc.sl, batch_size=dc.batch_size)
 
+    # initialize rnn cell of the encoder and the dddqn
     encoder = EncoderRNN(num_units=256)
+    choose_best_rnn_pretrained(encoder, encoder.encoder_cell, dc, search_size=1)
     dddqn = DDDQN(dc.word2idx, dc.idx2word, dc.idx2emb)
+    u.init_rnn_layer(dddqn.lstm)
+    u.update_layer(dddqn.lstm, encoder.encoder_cell)
 
+    # train the network to repeat the sentence
+    def get_loss(encoder, dddqn, epoch, x, y, sl, sos, max_steps, verbose=True):
+        output, cell_state = encoder.forward(x, sl)
+        lstm_state = (cell_state, output)
+        preds, logits = get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=True, x=x)
+        sl = [end_idx + 1 for end_idx in sl]  # sl = [len(sequence)-1, ...] => +1 to get the len
+        loss = u.cross_entropy_cost(logits, y, sequence_lengths=sl)
+        if verbose:
+            acc_words, acc_sentences = u.get_acc_word_seq(logits, y, sl)
+            logging.info('Epoch {} -> loss = {} | acc_words = {} | acc_sentences = {}'.format(epoch, loss, acc_words, acc_sentences))
+        return loss
+
+    optimizer = tf.train.AdamOptimizer()
+    for epoch in range(300):
+        for x, y, sl in zip(x_batch, y_parrot_batch, sl_batch):
+            sos = dc.get_sos_batch_size(len(x))
+            optimizer.minimize(lambda: get_loss(encoder, dddqn, epoch, x, y, sl, sos, dc.max_tokens))
+            input()  # TODO
 
 if __name__ == '__main__':
     import os
@@ -298,17 +349,10 @@ if __name__ == '__main__':
 
     tfe.enable_eager_execution()
 
-    dc = DataContainer(os.environ['INPUT'], os.environ['EMB'])
-    dc.prepare_data()
+    parrot_initialization_rgc(os.environ['INPUT'], os.environ['EMB'])
 
-    encoder = EncoderRNN()
-    choose_best_rnn_pretrained(encoder, encoder.encoder_cell, dc, search_size=1)
-    print(encoder.encoder_cell.variables)
-    decoder = DecoderRNN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
-    u.init_rnn_layer(decoder.decoder_cell)
-    print(decoder.decoder_cell.variables)
-    u.update_layer(decoder.decoder_cell, encoder.encoder_cell)
-    print(decoder.decoder_cell.variables)
+    # dc = DataContainer(os.environ['INPUT'], os.environ['EMB'])
+    # dc.prepare_data()
 
     # encoder = EncoderRNN()
     # trainer = RNNPreTrainer(dc.num_class, encoder.encoder_cell)

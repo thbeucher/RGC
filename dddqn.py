@@ -26,6 +26,26 @@ class DDDQN(object):
                                          name='advantage')
         self.to_update = [self.lstm, self.value_fc, self.value, self.advantage_fc, self.advantage]
 
+    def save(self, name=None):
+        name = name if name else self.name
+        save_path = 'models/' + name + '/'
+        if not os.path.isdir(save_path):
+            os.makedirs(save_path)
+        saver = tfe.Saver([t for var in self.to_update for t in var])
+        saver.save(save_path)
+
+    def load(self, name=None, only_lstm=False):
+        input_token = np.zeros((32, 300), dtype=np.float32)
+        lstm_state = self.lstm.zero_state(32, dtype=tf.float32)
+        self.forward(input_token, lstm_state)
+        if only_lstm:
+            saver = tfe.Saver(self.lstm.variables)
+        else:
+            saver = tfe.Saver([t for var in self.to_update for t in var])
+        name = name if name else self.name
+        save_path = 'models/' + name + '/'
+        saver.restore(save_path)
+
     def update(self, update_network):
         '''
         Updates every kernel and bias of available variables with the given values
@@ -61,7 +81,7 @@ class DDDQN(object):
         Q = v + tf.subtract(a, tf.reduce_mean(a, axis=1, keepdims=True))
         Qvalue = tf.reduce_max(Q, axis=1)
         action = tf.argmax(Q, axis=1)
-        return Qvalue, action, lstm_state
+        return Qvalue, action, lstm_state, Q
 
 
 if __name__ == '__main__':

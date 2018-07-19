@@ -236,3 +236,49 @@ def update_layer(layer_to_update, new_values):
     new_kernel, new_bias = new_values.variables
     old_kernel.assign(new_kernel)
     old_bias.assign(new_bias)
+
+
+def get_acc_word_seq(predictions, targets, sequence_lengths):
+    '''
+    Computes accuracy on words & on sequences
+
+    Inputs:
+        -> predictions, tensor, shape = [batch_size, max_tokens, vocab_size]
+        -> targets, numpy array of list, [batch_size, max_tokens, vocab_size]
+        -> sequence_lengths, list of int
+
+    Outputs:
+        -> acc_words, float, accuracy on words
+        -> acc_sentences, float, accuracy on sequences
+    '''
+    predict = tf.cast(tf.argmax(predictions, -1), dtype=tf.float32).numpy()
+    target = np.argmax(targets, -1)
+
+    gp_word = 0
+    gp_sentence = 0
+    for p, t, size in zip(predict, target, sequence_lengths):
+        if np.array_equal(p[:size], t[:size]):
+            gp_sentence += 1
+        gp_word += sum(np.equal(p[:size], t[:size]))
+
+    acc_words = round(gp_word / sum(sequence_lengths), 3)
+    acc_sentences = round(gp_sentence / len(sequence_lengths), 3)
+
+    return acc_words, acc_sentences
+
+
+def get_accuracy(logits, targets):
+    '''
+    Computes accuracy on logits
+
+    Inputs:
+        -> logits, tensor
+        -> target, numpy array or list
+
+    Outputs:
+        -> accuracy, float
+    '''
+    predict = tf.argmax(logits, 1).numpy()
+    target = np.argmax(targets, 1)
+    accuracy = np.sum(predict == target) / len(target)
+    return round(accuracy, 3)
