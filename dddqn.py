@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.eager as tfe
 
@@ -72,6 +73,8 @@ class DDDQN(object):
             -> Qvalue, tensor, shape = [batch_size]
             -> action, tensor, shape = [batch_size]
             -> lstm_state, tuple of tensor
+            -> Q, tensor,
+            -> words, list of predicted words in embedding representation
         '''
         input_token = tf.convert_to_tensor(input_token, dtype=tf.float32)
         output, lstm_state = self.lstm(input_token, lstm_state)
@@ -83,7 +86,7 @@ class DDDQN(object):
         Q = v + tf.subtract(a, tf.reduce_mean(a, axis=1, keepdims=True))
         Qvalue = tf.reduce_max(Q, axis=1)
         action = tf.argmax(Q, axis=1)
-        return Qvalue, action, lstm_state, Q
+        return Qvalue, action, lstm_state, Q, [self.i2e[a] for a in action.numpy()]
 
 
 if __name__ == '__main__':
