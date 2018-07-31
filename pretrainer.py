@@ -265,9 +265,13 @@ def parrot_initialization_rgc(dataset, emb_path, dc=None, encoder=None, dddqn=No
   x_batch, y_parrot_batch, sl_batch = u.to_batch(dc.x, dc.y_parrot_padded, dc.sl, batch_size=dc.batch_size)
 
   # initialize rnn cell of the encoder and the dddqn
+  rep = input('Load RNN cell pretrained for the encoder & dddqn? (y or n): ')
   if encoder is None:
     encoder = EncoderRNN(num_units=256)
-  choose_best_rnn_pretrained(encoder, encoder.encoder_cell, dc, search_size=1, multiprocessed=True)
+  if rep == 'y' or rep == '':
+    encoder.load(name='EncoderRNN-0')
+  else:
+    choose_best_rnn_pretrained(encoder, encoder.encoder_cell, dc, search_size=1, multiprocessed=True)
   # we do not need to train the dddqn rnn layer since we already trained the encoder rnn layer
   # we just have to initialize the dddqn rnn layer weights with the ones from the encoder
   if dddqn is None:
