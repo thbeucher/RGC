@@ -9,6 +9,8 @@ from attention import AttentionS2S
 import tensorflow.contrib.eager as tfe
 
 
+# # TODO:
+# => Luong attention implemented but the attention vector is not feed to the decoder input
 class DecoderRNN(object):
     def __init__(self, word2idx, idx2word, idx2emb, num_units=150, max_tokens=128, beam_size=10, attention=False):
         self.name = 'DecoderRNN'

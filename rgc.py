@@ -4,28 +4,62 @@ import sys
 import logging
 import argparse
 import tensorflow as tf
+import pretrainer_utils as pu
+import tensorflow.contrib.eager as tfe
+
 from dddqn import DDDQN
 from encoder import EncoderRNN
-import tensorflow.contrib.eager as tfe
 from data_container import DataContainer
 from pretrainer import parrot_initialization_rgc
+from black_box_classifier import BlackBoxClassifier
 
 import default  # to import os environment variables
 
 
-def load_needed(dataset, emb_path, attention):
-    dc = DataContainer(dataset, emb_path)
-    dc.prepare_data()
-    encoder = EncoderRNN()
-    dddqn = DDDQN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens, attention=attention)
-    encoder.load(name='Encoder-Decoder/Encoder')
-    dddqn.load(name='Encoder-Decoder/Decoder')
-    return encoder, dddqn, dc
+class RGC(object):
+  def __init__(self, dataset, emb_path):
+    self.name = 'RGC'
+    self.dataset = dataset
+    self.emb_path = emb_path
+    self.dc = DataContainer(dataset, emb_path)
+    self.dc.prepare_data()
+    self.encoder = EncoderRNN(num_units=256)
+    self.dddqn = DDDQN(self.dc.word2idx, self.dc.idx2word, self.dc.idx2emb, max_tokens=self.dc.max_tokens)
+    self.bbc = BlackBoxClassifier(dc=self.dc)
+
+  def pretrain(self):
+    logging.info('Launch of parrot initilization...')
+    self.encoder, self.dddqn, self.dc = parrot_initialization_rgc(self.dataset, self.emb_path, dc=self.dc,
+                                                                  encoder=self.encoder, dddqn=self.dddqn)
+
+  def forward(self, x, sl, training=False):
+    '''
+    Performs RGC forward pass
+
+    Inputs:
+      -> x, numpy array, shape = [batch_size, input_dim], example: [batch_size, sequence_length, embedding_dim]
+      -> sl, list of int, list of last sequence indice for each sample in given batch
+      -> training, boolean, optional,
+
+    Outputs:
+      -> sentences, list of string, predicted sentences
+    '''
+    sos = self.dc.get_sos_batch_size(len(x))
+    preds, logits = pu.full_encoder_dddqn_pass(x, sl, self.encoder, self.dddqn, sos, self.dc.max_tokens, training=training)
+    preds = [s[:s.index(self.dc.word2idx['eos'])] for s in preds.numpy().tolist()]
+    sentences = [' '.join([self.dc.idx2word[i] for i in s]) for s in preds]
+    return sentences
+
+  def test_pretained(self):
+    self.bbc.train(self.bbc.x_train, self.bbc.y_train)
+    self.bbc.predict_test(self.bbc.x_test, self.bbc.y_test)
+
+    x, sl, _, _ = self.dc.transform_sources(self.bbc.x_test, emb=self.dc.emb)
+    new_x_test = self.forward(x, sl)
+    self.bbc.predict_test(new_x_test, self.bbc.y_test)
 
 
 if __name__ == '__main__':
-    # # TODO:
-    # => Luong attention implemented but the attention vector is not feed to the decoder input
     argparser = argparse.ArgumentParser(prog='rgc.py', description='')
     argparser.add_argument('--input', metavar='INPUT', default=os.environ['INPUT'], type=str)
     argparser.add_argument('--language', metavar='LANGUAGE', default='en', type=str)
@@ -38,10 +72,6 @@ if __name__ == '__main__':
 
     tfe.enable_eager_execution()
 
-    rep = input('Launch parrot initialization? (y or n): ')
-    if rep == 'y' or rep == '':
-        logging.info('Launch of parrot initilization...')
-        encoder, dddqn, dc = parrot_initialization_rgc(args.input, args.emb)
-    else:
-        logging.info('Load previously pretrained encoder-decoder...')
-        encoder, decoder, dc = load_needed(args.input, args.emb)
+    rgc = RGC(args.input, args.emb)
+    rgc.pretrain()
+    rgc.test_pretained()

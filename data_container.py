@@ -100,7 +100,7 @@ class DataContainer(object):
         decoded_lowered_sources = [unidecode(s).lower() for s in cleaned_sources]
         return cleaned_sources, decoded_lowered_sources
 
-    def source_to_emb(self, sources, pad_with='eos'):
+    def source_to_emb(self, sources, pad_with='eos', emb=None):
         '''
         Converts sources to embedding representation, option to pad with one specific token
 
@@ -113,9 +113,12 @@ class DataContainer(object):
             -> seq_lengths, list of int
             -> max_sl, int, the bigger sequence length
         '''
-        logging.info('Loads embeddings...')
-        self.emb = ft.load_model(self.emb_path)
-        logging.info('Embeddings loaded.')
+        if emb is None:
+          logging.info('Loads embeddings...')
+          self.emb = ft.load_model(self.emb_path)
+          logging.info('Embeddings loaded.')
+        else:
+          self.emb = emb
         emb_sources = u.to_emb(sources, self.emb)  # list of numpy array [num_tokens, embeddings_size]
         padded_emb_sources, seq_lengths, max_sl = u.pad_data(emb_sources, pad_with=self.emb[pad_with])
         return padded_emb_sources, seq_lengths, max_sl
@@ -169,12 +172,27 @@ class DataContainer(object):
         stratify = self.labels if stratify_ref is None else stratify_ref
         return train_test_split(*args, test_size=self.test_size, stratify=stratify)
 
+    def transform_sources(self, sources, emb=None):
+      '''
+
+      Inputs:
+        -> sources, list of string,
+
+      Outputs:
+        -> sources, list of numpy array
+        -> seq_lengths, list of int
+        -> decoded_lowered_sources, list of string
+        -> max_tokens, int
+      '''
+      _, decoded_lowered_sources = self.preprocess_sentences(sources)
+      sources, seq_lengths, max_tokens = self.source_to_emb(decoded_lowered_sources, emb=emb)
+      return sources, seq_lengths, decoded_lowered_sources, max_tokens
+
     def prepare_data(self):
         '''
         Loads & prepares all data
         '''
-        _, decoded_lowered_sources = self.preprocess_sentences(self.sources)
-        sources, seq_lengths, self.max_tokens = self.source_to_emb(decoded_lowered_sources)
+        sources, seq_lengths, decoded_lowered_sources, self.max_tokens = self.transform_sources(self.sources)
         y_classif, self.num_class = self.get_y_classif(self.labels)
 
         self.get_load_save_vocab_data()

@@ -254,21 +254,24 @@ def parrot_initialization_encoder_decoder(dataset, emb_path, attention):
   return encoder, decoder, dc
 
 
-def parrot_initialization_rgc(dataset, emb_path):
+def parrot_initialization_rgc(dataset, emb_path, dc=None, encoder=None, dddqn=None):
   '''
   Trains the rgc to repeat the input
   '''
   # TODO save optimizer
-  dc = DataContainer(dataset, emb_path)
-  dc.prepare_data()
+  if dc is None:
+    dc = DataContainer(dataset, emb_path)
+    dc.prepare_data()
   x_batch, y_parrot_batch, sl_batch = u.to_batch(dc.x, dc.y_parrot_padded, dc.sl, batch_size=dc.batch_size)
 
   # initialize rnn cell of the encoder and the dddqn
-  encoder = EncoderRNN(num_units=256)
+  if encoder is None:
+    encoder = EncoderRNN(num_units=256)
   choose_best_rnn_pretrained(encoder, encoder.encoder_cell, dc, search_size=1, multiprocessed=True)
   # we do not need to train the dddqn rnn layer since we already trained the encoder rnn layer
   # we just have to initialize the dddqn rnn layer weights with the ones from the encoder
-  dddqn = DDDQN(dc.word2idx, dc.idx2word, dc.idx2emb)
+  if dddqn is None:
+    dddqn = DDDQN(dc.word2idx, dc.idx2word, dc.idx2emb)
   u.init_rnn_layer(dddqn.lstm)
   u.update_layer(dddqn.lstm, encoder.encoder_cell)
 
@@ -288,21 +291,23 @@ def parrot_initialization_rgc(dataset, emb_path):
     encoder.load('RGC/Encoder')
     dddqn.load('RGC/DDDQN')
 
-  optimizer = tf.train.AdamOptimizer()
-  # training loop over epoch and batchs
-  for epoch in range(300):
-    verbose = True
-    for x, y, sl in zip(x_batch, y_parrot_batch, sl_batch):
-      sos = dc.get_sos_batch_size(len(x))
-      optimizer.minimize(lambda: get_loss(encoder, dddqn, epoch, x, y, sl, sos, dc.max_tokens, verbose=verbose))
-      verbose = False
-    encoder.save(name='RGC/Encoder')
-    dddqn.save(name='RGC/DDDQN')
-    acc = pu.get_acc_full_dataset(dc, encoder, dddqn)
-    logging.info('Validation accuracy = {}'.format(acc))
-    if acc > 0.95:
-      logging.info('Stopping criteria on validation accuracy raised')
-      break
+  rep = input('Train RGC-ENCODER-DDDQN? (y or n): ')
+  if rep == 'y' or rep == '':
+    optimizer = tf.train.AdamOptimizer()
+    # training loop over epoch and batchs
+    for epoch in range(300):
+      verbose = True
+      for x, y, sl in zip(x_batch, y_parrot_batch, sl_batch):
+        sos = dc.get_sos_batch_size(len(x))
+        optimizer.minimize(lambda: get_loss(encoder, dddqn, epoch, x, y, sl, sos, dc.max_tokens, verbose=verbose))
+        verbose = False
+      encoder.save(name='RGC/Encoder')
+      dddqn.save(name='RGC/DDDQN')
+      acc = pu.get_acc_full_dataset(dc, encoder, dddqn)
+      logging.info('Validation accuracy = {}'.format(acc))
+      if acc > 0.95:
+        logging.info('Stopping criteria on validation accuracy raised')
+        break
 
   return encoder, dddqn, dc
 

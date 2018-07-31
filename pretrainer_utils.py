@@ -51,8 +51,8 @@ def full_encoder_dddqn_pass(x, sl, encoder, dddqn, sos, max_steps, training=Fals
     -> training, boolean, optional, whether to trigger training mode or inference mode
 
   Outputs:
-    -> preds,
-    -> logits,
+    -> preds, tensor, shape = [batch_size, time_step]
+    -> logits, tensor, shape = [batch_size, max_tokens, vocab_size]
   '''
   output, cell_state = encoder.forward(x, sl)
   lstm_state = (cell_state, output)
