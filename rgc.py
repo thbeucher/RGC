@@ -51,11 +51,20 @@ class RGC(object):
     return sentences
 
   def test_pretained(self):
+    '''
+    Trains the bbc with training data, gets predictions on test data
+    then gets new sentences from test data with RGC and gets predictions
+    on this new test data
+    print classification report for the two results
+    '''
+    logging.info('Train of the BBC...')
     self.bbc.train(self.bbc.x_train, self.bbc.y_train)
+    logging.info('Classification report of BBC on test data...')
     self.bbc.predict_test(self.bbc.x_test, self.bbc.y_test)
 
     x, sl, _, _ = self.dc.transform_sources(self.bbc.x_test, emb=self.dc.emb)
     new_x_test = self.forward(x, sl)
+    logging.info('Classification report of BBC on test data transformed by RGC...')
     self.bbc.predict_test(new_x_test, self.bbc.y_test)
 
 
