@@ -142,5 +142,6 @@ class TwinQ(object):
 
 
 if __name__ == '__main__':
-  t = TwinQ(greedy=True, reg=True, decrease_eps=0.01, gamma=0.3)
+  # if gamma > 0.1, think to use the regularization
+  t = TwinQ(greedy=True, reg=False, decrease_eps=0.01, gamma=0.1)
   t.master.mainloop()
