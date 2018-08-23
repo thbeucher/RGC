@@ -79,7 +79,7 @@ def draw_reward_struct(canvas, center, best_reward):
 
 
 def fill_mat(canvas, texts_pos, data):
-  fdata = data.flatten()
+  fdata = data.flatten(order='F')
   for i, t in enumerate(texts_pos):
     canvas.itemconfig(t, text=int(fdata[i]))
   canvas.update()
@@ -91,7 +91,7 @@ def draw_mat_struct(canvas, center, num_x_case, num_y_case, name, ncenter, size_
   Outputs:
     -> list of tuple (x, y) corresponding to all cases center
   '''
-  canvas.create_text(ncenter, 125, text=name)
+  canvas.create_text(ncenter[0], ncenter[1], text=name)
   x, y = center
 
   nyc_2, nxc_2 = num_y_case // 2, num_x_case // 2
@@ -113,28 +113,29 @@ def draw_mat_struct(canvas, center, num_x_case, num_y_case, name, ncenter, size_
   for xx in all_x:
     canvas.create_line(xx, y_up, xx, y_down)
 
-  centers = [(xx + sc2, yy + sc2) for yy in all_y[:-1] for xx in all_x[:-1]]
+  # centers = [(xx + sc2, yy + sc2) for yy in all_y[:-1] for xx in all_x[:-1]]  # tk_qleraning.py
+  centers = [(xx + sc2, yy + sc2) for xx in all_x[:-1] for yy in all_y[:-1]]
 
   # draw rectangle in order to fill it if we want
   rects = [canvas.create_rectangle(x - sc2, y - sc2, x + sc2, y + sc2) for x, y in centers]
 
   init_mat = np.zeros((num_x_case, num_y_case), dtype=np.int)
   finit_mat = init_mat.flatten()
-  texts_mat = [canvas.create_text(x, y, text=finit_mat[i]) for i, (x, y) in enumerate(centers)]
+  # texts_mat = [canvas.create_text(x, y, text=finit_mat[i]) for i, (x, y) in enumerate(centers)]  # tk_qleraning.py
+  texts_mat = [canvas.create_text(x, y, text=finit_mat[i]) for i, (x, y) in enumerate(sorted(centers, key=lambda x: x[1]))]
 
   return texts_mat, rects, centers
 
 
-def draw_labels_mat(canvas, centers, size_case=30):
+def draw_labels_mat(canvas, centers, texts_x, texts_y, size_case=30):
   xs = list(set(map(lambda x: x[0], centers)))
   ys = list(set(map(lambda y: y[1], centers)))
   x1 = centers[0][0] - size_case // 2 - 15
   y1 = centers[0][1] - size_case // 2 - 10
-  texts = ['eos', 'bien', 'vais', 'je', 'sos']
-  for i, x in enumerate(xs):
-    canvas.create_text(x, y1, text=texts[i])
-  for i, y in enumerate(ys):
-    canvas.create_text(x1, y, text=texts[i])
+  for i, x in enumerate(sorted(xs)):
+    canvas.create_text(x, y1, text=texts_x[i])
+  for i, y in enumerate(sorted(ys)):
+    canvas.create_text(x1, y, text=texts_y[i])
 
 
 def draw_sentence(canvas):

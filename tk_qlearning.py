@@ -28,12 +28,12 @@ class TwinQ(object):
     self.sentence = 'sos'
 
     self.texts_pos_old_q, self.old_q_pos, centers = u.draw_mat_struct(self.w, (750, 250), num_states,
-                                                                      num_actions, 'Old Q-table', 750)
-    u.draw_labels_mat(self.w, centers)
+                                                                      num_actions, 'Old Q-table', (750, 125))
+    u.draw_labels_mat(self.w, centers, ['sos', 'je', 'vais', 'bien', 'eos'], ['sos', 'je', 'vais', 'bien', 'eos'])
 
     self.texts_pos_new_q, self.new_q_pos, centers = u.draw_mat_struct(self.w, (1000, 250), num_states,
-                                                                      num_actions, 'New Q-table', 1000)
-    u.draw_labels_mat(self.w, centers)
+                                                                      num_actions, 'New Q-table', (1000, 125))
+    u.draw_labels_mat(self.w, centers, ['sos', 'je', 'vais', 'bien', 'eos'], ['sos', 'je', 'vais', 'bien', 'eos'])
 
     gr, nr, br = u.draw_reward_struct(self.w, 875, best_reward)
     self.rewards = {best_reward: gr, 0: nr, -1: br}
