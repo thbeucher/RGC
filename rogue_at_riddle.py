@@ -82,7 +82,9 @@ class RogueAtRiddle(object):
     self.initial_player_text = self.player_text.format('you')
     self.player = self.canvas.create_text(width // 6, 60, text=self.initial_player_text)
 
-    self.texts = {'player': self.player, 'game_state': self.game_state, 'tip': self.tip}
+    self.game_played = self.canvas.create_text(750, 20, text='game played: 0')
+
+    self.texts = {'player': self.player, 'game_state': self.game_state, 'tip': self.tip, 'game_played': self.game_played}
 
     # self.texts_pos_old_q, self.old_q_pos, centers = tkqu.draw_mat_struct(self.canvas, (750, 250), num_states,
     #                                                                      num_actions, 'Old Q-table', (750, 125))
@@ -142,7 +144,7 @@ class RogueAtRiddle(object):
     self.update_texts({'tip': '', 'player': '', 'game_state': text})
     state = self.state_where_I_was
     if not self.fix_qtable:
-      self.challenger.update_q_table(state, self.action_map[move], reward, None)
+      self.challenger.update_q_table(state, self.action_map[move], reward, None, borned=True)
       self.updateQtable()
 
   def player_update(self, move):
@@ -163,7 +165,7 @@ class RogueAtRiddle(object):
     self.state_after_IA_played = 25 - self.num_blue if 25 - self.num_blue < 25 else None
     if not self.fix_qtable:
       self.challenger.update_q_table(self.state_where_I_was, self.action_map[self.move_I_have_done], 0,
-                                     self.state_after_IA_played)
+                                     self.state_after_IA_played, borned=True)
       self.updateQtable()
     self.last_player = 'IA'
     return move, god_end
@@ -181,7 +183,8 @@ class RogueAtRiddle(object):
       self.last_player = 'IA'
       self.update_water_after_move()
       self.update_texts({'tip': self.initial_tip_text, 'player': self.initial_player_text,
-                         'game_state': self.initial_game_state_text})
+                         'game_state': self.initial_game_state_text,
+                         'game_played': 'game played: {}'.format(self.win + self.loose)})
 
     if event_char == 'a':
       if self.last_player == 'IA':
@@ -314,12 +317,19 @@ def training(number_of_training=1000):
   print('Number of win = {} | loose = {}'.format(rar.win, rar.loose))
 
 
+def fake_training():
+  while rar.win + rar.loose < 1000:
+    rar.actions(fe)
+  rar.force_best, rar.fix_qtable = True, True
+
+
 if __name__ == '__main__':
   fe = FakeEvent()
 
   iac = IAChallenger()
   rar = RogueAtRiddle(challenger=iac)
 
-  training()
+  fake_training()
+  # training()
 
   rar.window.mainloop()
