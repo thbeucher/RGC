@@ -317,7 +317,7 @@ def training(number_of_training=1000):
   print('Number of win = {} | loose = {}'.format(rar.win, rar.loose))
 
 
-def fake_training():
+def visual_training():
   while rar.win + rar.loose < 1000:
     rar.actions(fe)
   rar.force_best, rar.fix_qtable = True, True
@@ -329,7 +329,7 @@ if __name__ == '__main__':
   iac = IAChallenger()
   rar = RogueAtRiddle(challenger=iac)
 
-  fake_training()
+  visual_training()
   # training()
 
   rar.window.mainloop()
