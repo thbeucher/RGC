@@ -199,13 +199,13 @@ class DataContainer(object):
         y_parrot = self.get_y_sources(decoded_lowered_sources)
         y_parrot_padded = self.get_y_sources(decoded_lowered_sources, pad_with='eos', max_tokens=self.max_tokens)
 
-        # shuffle all data
-        self.x, self.y_classif, self.sl, self.y_parrot, self.y_parrot_padded = u.shuffle_data(sources, y_classif, seq_lengths,
-                                                                                              y_parrot, y_parrot_padded)
+        # shuffle all data | dls = decoded_lowered_sources
+        self.x, self.y_classif, self.sl, self.y_parrot, self.y_parrot_padded, self.dls, self.labels\
+          = u.shuffle_data(sources, y_classif, seq_lengths, y_parrot, y_parrot_padded, decoded_lowered_sources, self.labels)
         # split into train test
         # _tr = _train | _te = _test
-        self.x_tr, self.x_te, self.y_tr_classif, self.y_te_classif, self.sl_tr, self.sl_te,\
-        self.y_p_p_tr, self.y_p_p_te = self.split_data(self.x, self.y_classif, self.sl, self.y_parrot_padded)
+        self.x_tr, self.x_te, self.y_tr_classif, self.y_te_classif, self.sl_tr, self.sl_te, self.y_p_p_tr, self.y_p_p_te,\
+          self.dls_tr, self.dls_te = self.split_data(self.x, self.y_classif, self.sl, self.y_parrot_padded, self.dls)
 
         # arrange training data into batchs
         self.x_train, self.y_train_classif, self.sl_train, self.y_parrot_padded_train = u.to_batch(self.x_tr, self.y_tr_classif,

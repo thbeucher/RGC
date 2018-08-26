@@ -329,7 +329,7 @@ if __name__ == '__main__':
   iac = IAChallenger()
   rar = RogueAtRiddle(challenger=iac)
 
-  visual_training()
+  # visual_training()
   # training()
 
   rar.window.mainloop()

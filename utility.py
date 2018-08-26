@@ -311,3 +311,28 @@ def multiples_launch(function_to_call, args, num_process=4):
 
   queue.close()
   return results
+
+
+def split_into_3(*data, first_split=0.2, second_split=0.6):
+  '''
+  Splits list into 3 parts
+
+  Inputs:
+    -> data, give as many list as you want
+    -> first_split, float between 0 & 1, optional
+    -> second_split, float between 0 & 1, optional
+
+  Outputs:
+    -> split3, list of list, [[split1_list1, split2_list1, split3_list1], [...], ...]
+    example: if you provide a = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] and b = [a, b, c, d, e, f, g, h, i, j]
+    you will have in return: [[[0, 1], [2, 3, 4, 5, 6, 7], [8, 9]], [[a, b], [c, d, e, f, g, h], [i, j]]]
+  '''
+  split3 = []
+  for el in data:
+    step1 = int(first_split * len(el))
+    step2 = step1 + int(second_split * len(el))
+    fsplit = el[:step1]
+    ssplit = el[step1:step2]
+    tsplit = el[step2:]
+    split3.append([fsplit, ssplit, tsplit])
+  return split3

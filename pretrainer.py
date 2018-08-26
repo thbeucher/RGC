@@ -281,7 +281,7 @@ def parrot_initialization_rgc(dataset, emb_path, dc=None, encoder=None, dddqn=No
 
   # define the loss function used to pretrain the rgc
   def get_loss(encoder, dddqn, epoch, x, y, sl, sos, max_steps, verbose=True):
-    preds, logits = pu.full_encoder_dddqn_pass(x, sl, encoder, dddqn, sos, max_steps, training=True)
+    preds, logits, _, _, _ = pu.full_encoder_dddqn_pass(x, sl, encoder, dddqn, sos, max_steps, training=True)
     logits = tf.nn.softmax(logits)  # normalize logits between 0 & 1 to allow training through cross-entropy
     sl = [end_idx + 1 for end_idx in sl]  # sl = [len(sequence)-1, ...] => +1 to get the len
     loss = u.cross_entropy_cost(logits, y, sequence_lengths=sl)

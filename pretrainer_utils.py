@@ -22,19 +22,26 @@ def get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=False, x
   Outputs:
     -> predicted_words, tensor, shape = [batch_size, max_tokens]
     -> logits, tensor, shape = [batch_size, max_tokens, vocab_size]
+    -> lstm_states, list of lstm_state
+    -> we, list of word embeddings
   '''
   words = tf.convert_to_tensor(sos, dtype=tf.float32)
   x = np.asarray(x)
-  predicted_words, logits = [], []
+  predicted_words, logits, lstm_states, Q, Qs = [], [], [], [], []
   for mt in range(max_steps):
     q, a, lstm_state, logit, words = dddqn.forward(words, lstm_state)
     if training:
       words = x[:,mt,:]
     predicted_words.append(a)
     logits.append(logit)
+    lstm_states.append(lstm_state)
+    Q.append(q)
+    Qs.append(logit)
   predicted_words = tf.stack(predicted_words, axis=1)  # [max_steps, batch_size] to [batch_size, max_steps]
   logits = tf.stack(logits, axis=1)  # [num_steps, batch_size, vocab_size] to [batch_size, num_steps, vocab_size]
-  return predicted_words, logits
+  Q = tf.stack(Q, axis=1)
+  Qs = tf.stack(Qs, axis=1)
+  return predicted_words, logits, lstm_states, Q, Qs
 
 
 def full_encoder_dddqn_pass(x, sl, encoder, dddqn, sos, max_steps, training=False):
@@ -56,8 +63,8 @@ def full_encoder_dddqn_pass(x, sl, encoder, dddqn, sos, max_steps, training=Fals
   '''
   output, cell_state = encoder.forward(x, sl)
   lstm_state = (cell_state, output)
-  preds, logits = get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=training, x=x)
-  return preds, logits
+  preds, logits, lstm_states, Q, Qs = get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=training, x=x)
+  return preds, logits, lstm_states, Q, Qs
 
 
 def get_acc_full_dataset(dc, encoder, dddqn):
@@ -73,6 +80,6 @@ def get_acc_full_dataset(dc, encoder, dddqn):
   -> acc, float, accuracy
   '''
   sos = dc.get_sos_batch_size(len(dc.x))
-  preds, logits = full_encoder_dddqn_pass(dc.x, dc.sl, encoder, dddqn, sos, dc.max_tokens)
+  preds, logits, _, _, _ = full_encoder_dddqn_pass(dc.x, dc.sl, encoder, dddqn, sos, dc.max_tokens)
   _, acc = u.get_acc_word_seq(logits, dc.y_parrot_padded, dc.sl)
   return acc
