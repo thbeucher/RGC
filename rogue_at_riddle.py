@@ -6,6 +6,38 @@ import tkinter as tk
 import tk_qlearning_utils as tkqu
 
 
+def draw_graph(canvas):
+  canvas.create_line(1250, 500, 1250, 200, arrow=tk.LAST)
+  canvas.create_line(1250, 500, 1650, 500, arrow=tk.LAST)
+  canvas.create_text(1250, 175, text='% of win')
+  canvas.create_text(1450, 550, text='Number of games played')
+
+  labels_y = [i * 10 for i in range(11)]
+  for i, y in enumerate(np.linspace(500, 215, 11)):
+    canvas.create_line(1245, y, 1255, y)
+    canvas.create_text(1230, y, text=str(labels_y[i]))
+
+  labels_x = [i * 100 for i in range(11)]
+  for i, x in enumerate(np.linspace(1250, 1635, 11)):
+    canvas.create_line(x, 495, x, 505)
+    canvas.create_text(x, 520, text=str(labels_x[i]))
+
+
+def draw_curve(canvas, pts):
+  x = np.linspace(1250, 1635, 11)
+  y = np.linspace(500, 215, 11)
+  coords = []
+  if len(pts) <= len(x):
+    for i, pt in enumerate(pts):
+      y_center = y[-1] + (1 - pt) * (y[0] - y[-1])
+      canvas.create_line(x[i]-5, y_center, x[i]+5, y_center)
+      canvas.create_line(x[i], y_center-5, x[i], y_center+5)
+      coords.append((x[i], y_center))
+    for i, (xx, yy) in enumerate(coords):
+      if len(coords) > i + 1:
+        canvas.create_line(xx, yy, coords[i+1][0], coords[i+1][1], fill='red')
+
+
 def create_tower(canvas, num_floor, canvas_width, canvas_height, floor_width, floor_height):
   pair = True if num_floor % 2 == 0 else False
   x_left = canvas_width // 2 - floor_width // 2
@@ -18,12 +50,16 @@ def create_tower(canvas, num_floor, canvas_width, canvas_height, floor_width, fl
     y_down = canvas_height // 2 + num_floor // 2 * floor_height + floor_height // 2
   all_y = list(range(y_up, y_down, floor_height))
 
-  recs = []
+  recs, texts = [], []
   i = num_floor - 1
   for y in all_y:
     recs.append(canvas.create_rectangle(x_left, y, x_right, y + floor_height))
-    canvas.create_text(canvas_width // 2, y + floor_height // 2, text=str(i))
+    texts.append(canvas.create_text(canvas_width // 2, y + floor_height // 2, text=str(i)))
     i -= 1
+
+  for i, t in enumerate(texts[::-1]):
+    if i % 7 == 0 or (i - 2) % 7 == 0:
+      canvas.itemconfig(t, fill='red')
 
   return recs
 
@@ -51,7 +87,7 @@ def god_move(state):
 
 
 class RogueAtRiddle(object):
-  def __init__(self, challenger=None, height=700, width=1250, num_floor=26, num_actions=3, num_states=25):
+  def __init__(self, challenger=None, height=700, width=1750, num_floor=26, num_actions=3, num_states=25):
     self.force_best = False
     self.fix_qtable = False
     self.win, self.loose = 0, 0
@@ -65,10 +101,13 @@ class RogueAtRiddle(object):
     self.window.bind("<Key>", self.actions)
 
     self.canvas = tk.Canvas(self.window, width=width, height=height)
-    self.recs = create_tower(self.canvas, 26, width // 3, height, 100, 20)
+    # self.recs = create_tower(self.canvas, 26, width // 3, height, 100, 20)
+    self.recs = create_tower(self.canvas, 26, width // 5, height, 100, 20)
+
+    draw_graph(self.canvas)
 
     self.initial_game_state_text = 'playing'
-    self.game_state = self.canvas.create_text(width // 6, 20, text=self.initial_game_state_text)
+    self.game_state = self.canvas.create_text(width // 10, 20, text=self.initial_game_state_text)
     self.num_blue = 25
 
     initial_blue_states = [''] + ['blue' for _ in range(self.num_blue)]
@@ -76,11 +115,11 @@ class RogueAtRiddle(object):
 
     move, move_type = god_move(self.num_blue)
     self.initial_tip_text = self.text_tip.format(move, move_type)
-    self.tip = self.canvas.create_text(width // 6, 40, text=self.initial_tip_text)
+    self.tip = self.canvas.create_text(width // 10, 40, text=self.initial_tip_text)
 
     self.player_text = 'turn: {}'
     self.initial_player_text = self.player_text.format('you')
-    self.player = self.canvas.create_text(width // 6, 60, text=self.initial_player_text)
+    self.player = self.canvas.create_text(width // 10, 60, text=self.initial_player_text)
 
     self.game_played = self.canvas.create_text(750, 20, text='game played: 0')
 
@@ -246,6 +285,21 @@ class Game(object):
       return self.state, 0, False  # if game is not finish yet
 
 
+def speed_game(challenger, num_games):
+  game = Game()
+  terminal = False
+  num_win = 0
+  for _ in range(num_games):
+    while not terminal:
+      action = challenger.choose_action(game.get_available_actions, 25 - game.state, force_best=True)
+      _, reward, terminal = game.play(action)
+    if reward > 0:
+      num_win += 1
+    terminal = False
+    game.restart()
+  return num_win / num_games
+
+
 def speed_training(challenger, num_games):
   game = Game()
   state = game.state
@@ -317,19 +371,31 @@ def training(number_of_training=1000):
   print('Number of win = {} | loose = {}'.format(rar.win, rar.loose))
 
 
-def visual_training():
-  while rar.win + rar.loose < 1000:
+def visual_training(fe, number_of_training=1000):
+  pts = [0]
+  memory_game = 1
+  while rar.win + rar.loose < number_of_training:
     rar.actions(fe)
+    num_games = rar.win + rar.loose
+    # to update curve with win/loose rate
+    if num_games % 100 == 0 and num_games > 0 and num_games > memory_game:
+      percent_win = speed_game(rar.challenger, 100)
+      memory_game = num_games
+      pts.append(percent_win)
+      draw_curve(rar.canvas, pts)
+
   rar.force_best, rar.fix_qtable = True, True
 
 
 if __name__ == '__main__':
+  random.seed(4)
+  np.random.seed(4)
   fe = FakeEvent()
 
   iac = IAChallenger()
   rar = RogueAtRiddle(challenger=iac)
 
-  # visual_training()
+  visual_training(fe, number_of_training=1000)
   # training()
 
   rar.window.mainloop()

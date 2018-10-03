@@ -15,21 +15,22 @@ import default
 
 
 def eval_rgc(epoch, dqn, x_test, sl_test, labels, dls_test, report=False, show_idx=None):
+  acc, f1 = None, None
   rgc_sentences = dqn.predict(x_test, sl_test, return_all=False)
-  if show_idx is not None:
-    with open('rgc_results_extract.txt', 'a') as f:
-      f.write('Epoch {}:\n'.format(epoch))
-      dtnp = np.asarray(dls_test)[show_idx]
-      snp = np.asarray(rgc_sentences)[show_idx]
-      lnp = np.asarray(labels)[show_idx]
-      for t, p, l in zip(dtnp, snp, lnp):
-        f.write('Label -> ' + l + '\nTarget -> ' + t + '\nPred -> ' + p + '\n\n')
-      f.write('\n\n\n\n')
   if report:
     dqn.bbc.predict_test(rgc_sentences, labels)
   else:
-    acc, f1 = dqn.bbc.get_accuracy_f1(rgc_sentences, labels)
-    return acc, f1
+    acc, f1, preds = dqn.bbc.get_accuracy_f1(rgc_sentences, labels, return_preds=True)
+  if show_idx is not None:
+    with open('rgc_results_extract.txt', 'a') as f:
+      f.write('Epoch {}:\n'.format(epoch))
+      inputs = np.asarray(dls_test)[show_idx]
+      outputs = np.asarray(rgc_sentences)[show_idx]
+      true_labels = np.asarray(labels)[show_idx]
+      for true, pred, inp, output in zip(true_labels, preds[show_idx], inputs, outputs):
+        f.write('True -> {} | Pred -> {}\nInput -> {}\nOutput -> {}\n\n'.format(true, pred, inp, output))
+      f.write('\n\n\n\n')
+  return acc, f1
 
 
 def main_execution(dataset, emb_path):
@@ -43,6 +44,7 @@ def main_execution(dataset, emb_path):
   DQNetwork.bbc.train(dls_bbc, y_bbc)
   # eval bbc
   mispredicted, f1_ref = DQNetwork.bbc.predict_test(dls_te, y_te)
+  logging.info('F1 REFERENCE SCORE = {}'.format(round(f1_ref, 2)))
 
   TargetNetwork = RGC(dataset, emb_path, dc=DQNetwork.dc, bbc=DQNetwork.bbc, name='TargetNetwork')
 
@@ -91,7 +93,7 @@ def main_execution(dataset, emb_path):
     logging.info('Validation f1 on epoch {} = {}'.format(epoch, validation_f1))
     # update target network weights
     TargetNetwork.update(DQNetwork)
-    if validation_f1 > f1_ref:
+    if validation_f1 > f1_ref + 0.05:
       break
 
 

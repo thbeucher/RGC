@@ -80,7 +80,8 @@ class DataContainer(object):
         if rep == 'y' or rep == '':
             self.load_dicts()
         else:
-            self.vocabulary, self.word2idx, self.idx2word, self.idx2emb = u.get_vocabulary(decoded_lowered_sources + ['sos'], self.emb)
+            self.vocabulary, self.word2idx, self.idx2word, self.idx2emb\
+              = u.get_vocabulary(self.decoded_lowered_sources + ['sos'], self.emb)
             self.word2onehot = u.one_hot_encoding(list(self.word2idx.keys()))
             self.save_dicts()
 
@@ -192,16 +193,16 @@ class DataContainer(object):
         '''
         Loads & prepares all data
         '''
-        sources, seq_lengths, decoded_lowered_sources, self.max_tokens = self.transform_sources(self.sources)
+        sources, seq_lengths, self.decoded_lowered_sources, self.max_tokens = self.transform_sources(self.sources)
         y_classif, self.num_class = self.get_y_classif(self.labels)
 
         self.get_load_save_vocab_data()
-        y_parrot = self.get_y_sources(decoded_lowered_sources)
-        y_parrot_padded = self.get_y_sources(decoded_lowered_sources, pad_with='eos', max_tokens=self.max_tokens)
+        y_parrot = self.get_y_sources(self.decoded_lowered_sources)
+        y_parrot_padded = self.get_y_sources(self.decoded_lowered_sources, pad_with='eos', max_tokens=self.max_tokens)
 
         # shuffle all data | dls = decoded_lowered_sources
         self.x, self.y_classif, self.sl, self.y_parrot, self.y_parrot_padded, self.dls, self.labels\
-          = u.shuffle_data(sources, y_classif, seq_lengths, y_parrot, y_parrot_padded, decoded_lowered_sources, self.labels)
+          = u.shuffle_data(sources, y_classif, seq_lengths, y_parrot, y_parrot_padded, self.decoded_lowered_sources, self.labels)
         # split into train test
         # _tr = _train | _te = _test
         self.x_tr, self.x_te, self.y_tr_classif, self.y_te_classif, self.sl_tr, self.sl_te, self.y_p_p_tr, self.y_p_p_te,\

@@ -78,19 +78,22 @@ class BlackBoxClassifier(object):
     mispredicted = np.where(preds != y_test)[0]
     return mispredicted, f1_score(preds, y_test, average='weighted')
 
-  def get_accuracy_f1(self, x_test, y_test):
+  def get_accuracy_f1(self, x_test, y_test, return_preds=False):
     test = self.vectorizer.transform(x_test)
     preds = self.classifier.predict(test)
     acc = accuracy_score(preds, y_test)
     f1 = f1_score(preds, y_test, average='weighted')
-    return acc, f1
+    if return_preds:
+      return acc, f1, preds
+    else:
+      return acc, f1
 
   def get_reward(self, sentence, label, terminal=False):
     sv = self.vectorizer.transform([sentence])
     pred = self.classifier.predict(sv)[0]
     num_tokens = len(sentence.split(' '))
     if terminal:
-      return 100 + 10 / num_tokens if pred == label else -10 - num_tokens
+      return 100 + 100 / num_tokens if pred == label else -10 - num_tokens
     else:
       return 10 if pred == label else -1
 
