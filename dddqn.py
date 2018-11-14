@@ -48,8 +48,8 @@ class DDDQN(object):
     saver.restore(save_path)
 
   def init_layers(self):
-    input_token = np.zeros((32, 300), dtype=np.float32)
-    lstm_state = self.lstm.zero_state(32, dtype=tf.float32)
+    input_token = np.zeros((32, 300), dtype=np.float64)
+    lstm_state = self.lstm.zero_state(32, dtype=tf.float64)
     self.forward(input_token, lstm_state)
 
   def update(self, update_network):
@@ -79,7 +79,7 @@ class DDDQN(object):
       -> Q, tensor,
       -> words, list of predicted words in embedding representation
     '''
-    input_token = tf.convert_to_tensor(input_token, dtype=tf.float32)
+    input_token = tf.convert_to_tensor(input_token, dtype=tf.float64)
     output, lstm_state = self.lstm(input_token, lstm_state)
     vfc = self.value_fc(output)
     v = self.value(vfc)
@@ -113,7 +113,7 @@ if __name__ == '__main__':
   targetDQN = DDDQN(dc.word2idx, dc.idx2word, dc.idx2emb, max_tokens=dc.max_tokens)
 
   x = np.asarray(dc.x_train[0])
-  state = mainDQN.lstm.zero_state(dc.batch_size, dtype=tf.float32)
+  state = mainDQN.lstm.zero_state(dc.batch_size, dtype=tf.float64)
   for mt in range(dc.max_tokens):
     Qvalue, action, state = mainDQN.forward(x[:,mt,:], state)
     targetDQN.forward(x[:,mt,:], state)

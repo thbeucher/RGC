@@ -25,7 +25,7 @@ def get_sequence_from_dddqn(dddqn, sos, lstm_state, max_steps, training=False, x
     -> lstm_states, list of lstm_state
     -> we, list of word embeddings
   '''
-  words = tf.convert_to_tensor(sos, dtype=tf.float32)
+  words = tf.convert_to_tensor(sos, dtype=tf.float64)
   x = np.asarray(x)
   predicted_words, logits, lstm_states, Q, Qs = [], [], [], [], []
   for mt in range(max_steps):

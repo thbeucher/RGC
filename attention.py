@@ -14,7 +14,7 @@ class AttentionS2S(object):
         self.attention_layer = tf.layers.Dense(attention_size, activation=None)
 
     def forward(self, hidden, encoder_outputs):
-        encoder_outputs = tf.convert_to_tensor(encoder_outputs, dtype=tf.float32)  # [batch_size, time_steps, cell_size]
+        encoder_outputs = tf.convert_to_tensor(encoder_outputs, dtype=tf.float64)  # [batch_size, time_steps, cell_size]
         scores = self.score_fn(hidden, encoder_outputs)
         attention_weights = tf.nn.softmax(scores)  # [batch_size, time_steps]
         aws = tf.stack([attention_weights] * self.hidden_size, axis=2)  # [batch_size, time_steps, cell_size]

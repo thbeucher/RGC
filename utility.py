@@ -142,7 +142,7 @@ def one_hot_encoding(labels):
   uniq_labels = list(set(labels))
   labels2onehot = {}
   for l in uniq_labels:
-    onehot = np.zeros(len(uniq_labels), dtype=np.float32)
+    onehot = np.zeros(len(uniq_labels), dtype=np.float64)
     onehot[uniq_labels.index(l)] = 1.
     labels2onehot[l] = onehot
   return labels2onehot
@@ -203,7 +203,7 @@ def cross_entropy_cost(output, target, sequence_lengths=None):
   cross_entropy = -tf.reduce_sum(cross_entropy, 2)
 
   if sequence_lengths is not None:
-    mask = tf.cast(tf.sequence_mask(sequence_lengths, output.shape[1]), dtype=tf.float32)
+    mask = tf.cast(tf.sequence_mask(sequence_lengths, output.shape[1]), dtype=tf.float64)
     # mask = tf.sign(tf.reduce_max(tf.abs(target), 2))
     cross_entropy *= mask
 
@@ -220,8 +220,8 @@ def init_rnn_layer(layer_to_init):
   Inputs:
     -> layer_to_init, tensorflow rnn layer
   '''
-  hidden = tf.convert_to_tensor(np.zeros((32, 300), dtype=np.float32))
-  state = layer_to_init.zero_state(32, dtype=tf.float32)
+  hidden = tf.convert_to_tensor(np.zeros((32, 300), dtype=np.float64))
+  state = layer_to_init.zero_state(32, dtype=tf.float64)
   layer_to_init(hidden, state)
 
 
@@ -252,7 +252,7 @@ def get_acc_word_seq(predictions, targets, sequence_lengths):
     -> acc_words, float, accuracy on words
     -> acc_sentences, float, accuracy on sequences
   '''
-  predict = tf.cast(tf.argmax(predictions, -1), dtype=tf.float32).numpy()
+  predict = tf.cast(tf.argmax(predictions, -1), dtype=tf.float64).numpy()
   target = np.argmax(targets, -1)
 
   gp_word = 0

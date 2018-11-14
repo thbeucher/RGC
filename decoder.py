@@ -40,9 +40,9 @@ class DecoderRNN(object):
 
     def load(self, name=None, only_lstm=False):
         x = [np.zeros((25, 300))] * 32
-        sos = np.zeros((32, 300), dtype=np.float32)
-        state = self.decoder_cell.zero_state(32, dtype=tf.float32)
-        outputs = np.zeros((32, 25, 150), dtype=np.float32)
+        sos = np.zeros((32, 300), dtype=np.float64)
+        state = self.decoder_cell.zero_state(32, dtype=tf.float64)
+        outputs = np.zeros((32, 25, 150), dtype=np.float64)
         self.forward(sos, state, x, list(range(2, 34, 1)), outputs, training=True)
         if only_lstm:
             saver = tfe.Saver(self.decoder_cell.variables)
@@ -106,7 +106,7 @@ class DecoderRNN(object):
                 words_predicted = self.beam_search(sos, state)  # beam_search decoding with beam_size of 1 = greedy_decoding
             words_logits = None
         else:
-            output = tf.convert_to_tensor(sos, dtype=tf.float32)
+            output = tf.convert_to_tensor(sos, dtype=tf.float64)
             words_predicted, words_logits = [], []
             for mt in range(self.max_tokens):
                 pred_word, state, logits = self.greedy_forward(output, state)
@@ -146,7 +146,7 @@ class DecoderRNN(object):
             -> words_predicted, tensor, shape = [num_samples, max_tokens]
         '''
         logging.info('Performs greedy decoding over given samples...')
-        output = tf.convert_to_tensor(output, dtype=tf.float32)
+        output = tf.convert_to_tensor(output, dtype=tf.float64)
         words_predicted = []
         for mt in range(self.max_tokens):
             pred_word, state, _ = self.greedy_forward(output, state)
@@ -171,7 +171,7 @@ class DecoderRNN(object):
         words_predicted = []
         for sample, state in zip(output, states):
             state = (tf.reshape(state[0], [1, self.num_units]), tf.reshape(state[1], [1, self.num_units]))
-            sample = tf.convert_to_tensor(sample.reshape((1, 300)), dtype=tf.float32)
+            sample = tf.convert_to_tensor(sample.reshape((1, 300)), dtype=tf.float64)
             logits, state = self.prediction(sample, state)
             state = (tf.tile(state[0], [self.beam_size, 1]), tf.tile(state[1], [self.beam_size, 1]))
             values, indices = tf.nn.top_k(logits, k=self.beam_size)

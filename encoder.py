@@ -31,7 +31,7 @@ class EncoderRNN(object):
     saver.restore(save_path)
 
   def init_layers(self):
-    self.forward(np.zeros((32, 16, 300), dtype=np.float32), list(range(2, 34, 1)))
+    self.forward(np.zeros((32, 16, 300), dtype=np.float64), list(range(2, 34, 1)))
 
   def forward(self, x, sl, reverse=True):
     '''
@@ -46,7 +46,7 @@ class EncoderRNN(object):
       -> final_output, numpy array, shape = [batch_size, cell_size]
       ps: if you want all outputs and all cell states you can acces to outputs & cell_states attribute
     '''
-    state = self.encoder_cell.zero_state(len(x), dtype=tf.float32)  # Initialize LSTM cell state with zeros
+    state = self.encoder_cell.zero_state(len(x), dtype=tf.float64)  # Initialize LSTM cell state with zeros
     unstacked_x = tf.unstack(x, axis=1)  # unstack the embeddings, shape = [time_steps, batch_size, emb_dim]
     if reverse:
       unstacked_x = reversed(unstacked_x)

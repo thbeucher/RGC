@@ -31,7 +31,7 @@ class RNNPreTrainer(object):
     Outputs:
       -> logits, tensor, shape = [batch_size, num_class]
     '''
-    state = self.layer_to_train.zero_state(len(x), dtype=tf.float32)  # Initialize LSTM cell state with zeros
+    state = self.layer_to_train.zero_state(len(x), dtype=tf.float64)  # Initialize LSTM cell state with zeros
     unstacked_x = tf.unstack(x, axis=1)  # unstack the embeddings, shape = [time_steps, batch_size, emb_dim]
     unstacked_x = reversed(unstacked_x)
     outputs = []
@@ -271,7 +271,7 @@ def parrot_initialization_rgc(dataset, emb_path, dc=None, encoder=None, dddqn=No
   if rep == 'y' or rep == '':
     encoder.load(name='EncoderRNN-0')
   else:
-    choose_best_rnn_pretrained(encoder, encoder.encoder_cell, dc, search_size=1, multiprocessed=True)
+    choose_best_rnn_pretrained(encoder, encoder.encoder_cell, dc, search_size=1, multiprocessed=False)
   # we do not need to train the dddqn rnn layer since we already trained the encoder rnn layer
   # we just have to initialize the dddqn rnn layer weights with the ones from the encoder
   if dddqn is None:
