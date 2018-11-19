@@ -76,8 +76,9 @@ def main_execution(dataset, emb_path):
         s = s1
         e = dqn.dc.idx2emb[a]
       batch_loss.append(tf.reduce_sum(sentence_losses))
-    final_loss = tf.reduce_mean(batch_loss)
-    logging.info('loss = {}'.format(final_loss))
+    # final_loss = tf.reduce_mean(batch_loss)
+    final_loss = tf.reduce_sum(batch_loss)
+    # logging.info('loss = {}'.format(final_loss))
     return final_loss
 
   optimizer = tf.train.AdamOptimizer()
